@@ -109,6 +109,53 @@ $XAML_AddScriptDialog = @"
 "@
 #endregion
 
+#region Constants
+# UI Layout and styling constants
+$UIConstants = @{
+    WindowTitle          = "PowerShell Remote Admin Tool v4.3 (Best Practices)"
+    WindowHeight         = 800
+    WindowWidth          = 1000
+    LeftPanelWidth       = 350
+    ComputerListHeight   = 125
+    OutputConsoleHeight  = 250
+    OutputConsoleMinHeight = 100
+    ConsoleFont          = "Consolas"
+}
+
+# Color constants for output messages
+$ColorConstants = @{
+    Success        = "Green"
+    Error          = "Red"
+    Warning        = "OrangeRed"
+    Info           = "Black"
+    Highlight      = "Blue"
+    Subtle         = "Gray"
+    Section        = "DarkBlue"
+    UserAction     = "Orange"
+}
+
+# Regular expression patterns
+$RegexPatterns = @{
+    PowerShellCodeBlock = '(?s)```powershell\s*(.*?)\s*```'
+    BoldText            = '\*\*(.*?)\*\*'
+}
+
+# Supported file extensions for scripts
+$SupportedExtensions = @('.ps1', '.md')
+
+# XML and file operation constants
+$FileConstants = @{
+    ScriptsXmlName        = "scripts.xml"
+    RootElement           = "scripts"
+    ScriptElement         = "script"
+    ScriptNameElement     = "name"
+    ScriptPathElement     = "path"
+    DefaultXmlContent     = '<scripts></scripts>'
+    FileFilterAddScript   = "Supported Scripts (*.md, *.ps1)|*.md;*.ps1|All files (*.*)|*.*"
+    FileFilterImport      = "Text Files (*.txt)|*.txt|CSV Files (*.csv)|*.csv|All files (*.*)|*.*"
+}
+#endregion
+
 #region Helper Functions
 
 function Add-OutputLine {
@@ -117,24 +164,41 @@ function Add-OutputLine {
         Adds a colored line of text to the main output console.
     .DESCRIPTION
         This function safely handles UI updates from any thread by using the window's Dispatcher. 
-        It creates a new paragraph in the RichTextBox for each line.
+        It creates a new paragraph in the RichTextBox for each line. The function validates
+        the color parameter to prevent WPF color conversion errors.
     .PARAMETER Text
-        The string of text to add to the console.
+        The string of text to add to the console. Required.
     .PARAMETER Color
-        The color of the text. Can be a named color like "Red", "Green", or "Black".
+        The color of the text as a named color (Red, Green, Black, etc.). Defaults to Black.
+        Invalid colors will fall back to Black to prevent UI errors.
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
         [string]$Text,
 
-        [string]$Color = "Black"
+        [ValidateNotNullOrEmpty()]
+        [string]$Color = $ColorConstants.Info
     )
-    # The Dispatcher is used to ensure UI components are only updated on the main UI thread.
-    $ui.Window.Dispatcher.Invoke([Action]{
+
+    # Validate color by attempting conversion; fall back to black if invalid.
+    $validColor = $Color
+    try {
+        [System.Windows.Media.ColorConverter]::ConvertFromString($validColor) | Out-Null
+    }
+    catch {
+        Write-Verbose "Invalid color '$Color' specified; using default."
+        $validColor = $ColorConstants.Info
+    }
+
+    # The Dispatcher ensures UI components are updated only on the main UI thread.
+    $ui.Window.Dispatcher.Invoke([Action] {
         $paragraph = [System.Windows.Documents.Paragraph]::new()
         $run = [System.Windows.Documents.Run]::new($Text)
-        $run.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString($Color))
+        $run.Foreground = [System.Windows.Media.SolidColorBrush]::new(
+            [System.Windows.Media.ColorConverter]::ConvertFromString($validColor)
+        )
         $paragraph.Inlines.Add($run)
         $ui.OutputConsole.Document.Blocks.Add($paragraph)
         $ui.OutputConsole.ScrollToEnd()
@@ -144,77 +208,120 @@ function Add-OutputLine {
 function Update-ScriptLibraryView {
     <#
     .SYNOPSIS
-        Loads all scripts from the scripts.xml file and populates the UI.
+        Loads scripts from the scripts.xml file and populates the UI controls.
     .DESCRIPTION
         Reads the scripts.xml file from the script's root directory. If the file doesn't exist,
-        it creates a new one. It then populates the ListView in the "Script Library" tab
-        and the ComboBox in the main tab.
+        it creates a new one. The function then populates the ListView in the "Script Library" tab
+        and the ComboBox in the main tab. Handles XML parsing errors gracefully.
+    .NOTES
+        This function accesses global $ui and $ScriptsXmlPath variables.
     #>
     [CmdletBinding()]
     param()
 
-    if (-not (Test-Path $ScriptsXmlPath)) { 
-        Add-OutputLine -Text "scripts.xml not found. Creating a new one." -Color "OrangeRed"
-        '<scripts></scripts>' | Set-Content -Path $ScriptsXmlPath
+    try {
+        # Create scripts.xml if it doesn't exist.
+        if (-not (Test-Path -Path $ScriptsXmlPath)) {
+            Add-OutputLine -Text "scripts.xml not found. Creating a new one." -Color $ColorConstants.Warning
+            [System.IO.File]::WriteAllText($ScriptsXmlPath, $FileConstants.DefaultXmlContent)
+        }
+
+        # Load XML with error handling for malformed files.
+        [xml]$scriptsXml = Get-Content -Path $ScriptsXmlPath -ErrorAction Stop
+
+        # Validate that the root element exists.
+        if ($null -eq $scriptsXml.DocumentElement) {
+            throw "XML file is empty or malformed."
+        }
+
+        # Clear existing items to prevent duplication on reload.
+        $ui.ScriptLibraryListView.ItemsSource = $null
+        $ui.ScriptSelectionComboBox.ItemsSource = $null
+
+        # Build array of script objects from XML nodes.
+        $scriptObjects = @()
+        foreach ($node in $scriptsXml.scripts.script) {
+            # Validate that both name and path are present.
+            if ([string]::IsNullOrWhiteSpace($node.name) -or [string]::IsNullOrWhiteSpace($node.path)) {
+                Write-Verbose "Skipping script with missing name or path."
+                continue
+            }
+
+            $scriptObjects += [PSCustomObject]@{
+                Name = $node.name
+                Path = $node.path
+            }
+        }
+
+        # Populate UI controls with scripts.
+        $ui.ScriptLibraryListView.ItemsSource = $scriptObjects
+        $ui.ScriptSelectionComboBox.ItemsSource = $scriptObjects
+
+        # Select the first item if scripts exist.
+        if ($scriptObjects.Count -gt 0) {
+            $ui.ScriptSelectionComboBox.SelectedIndex = 0
+        }
+
+        Update-ScriptDescriptionView
     }
-    
-    [xml]$scriptsXml = Get-Content -Path $ScriptsXmlPath
-    
-    # Clear existing items to prevent duplication on reload.
-    $ui.ScriptLibraryListView.ItemsSource = $null
-    $ui.ScriptSelectionComboBox.ItemsSource = $null
-    
-    $scriptObjects = @()
-    foreach ($node in $scriptsXml.scripts.script) { 
-        $scriptObjects += [PSCustomObject]@{ 
-            Name = $node.name
-            Path = $node.path 
-        } 
+    catch {
+        Add-OutputLine -Text "Error loading script library: $($_.Exception.Message)" -Color $ColorConstants.Error
     }
-    
-    $ui.ScriptLibraryListView.ItemsSource = $scriptObjects
-    $ui.ScriptSelectionComboBox.ItemsSource = $scriptObjects
-    
-    if ($scriptObjects.Count -gt 0) { 
-        $ui.ScriptSelectionComboBox.SelectedIndex = 0 
-    }
-    
-    Update-ScriptDescriptionView
 }
 
 function Get-ScriptCodeFromFile {
     <#
     .SYNOPSIS
-        Extracts the executable PowerShell code from a script file.
+        Extracts executable PowerShell code from a script file.
     .DESCRIPTION
-        If the file is a .ps1 file, it returns the entire raw content.
-        If the file is a .md file, it uses a regular expression to find and extract
-        the content from the first ```powershell code block.
+        For .ps1 files, returns the entire raw content.
+        For .md files, extracts the content from the first ```powershell code block using regex.
+        Performs validation to ensure the file exists and contains valid PowerShell code.
     .PARAMETER FilePath
-        The full path to the .ps1 or .md file.
+        The full path to the .ps1 or .md file. Required.
+    .OUTPUTS
+        [string] The extracted PowerShell code.
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
         [string]$FilePath
     )
 
-    if (-not (Test-Path $FilePath)) { throw "File not found: $FilePath" }
+    # Validate file existence.
+    if (-not (Test-Path -Path $FilePath -PathType Leaf)) {
+        throw "Script file not found: $FilePath"
+    }
 
-    $fileContent = Get-Content -Path $FilePath -Raw
+    # Validate file extension.
+    $extension = [System.IO.Path]::GetExtension($FilePath).ToLower()
+    if ($extension -notin $SupportedExtensions) {
+        throw "Unsupported file extension: $extension. Supported: $($SupportedExtensions -join ', ')"
+    }
 
-    if ($FilePath.EndsWith(".ps1", [System.StringComparison]::OrdinalIgnoreCase)) { 
+    try {
+        $fileContent = Get-Content -Path $FilePath -Raw -ErrorAction Stop
+    }
+    catch {
+        throw "Failed to read script file: $($_.Exception.Message)"
+    }
+
+    # For PowerShell files, return content as-is.
+    if ($extension -eq '.ps1') {
         return $fileContent
     }
-    
-    $codeBlockRegex = '(?s)```powershell\s*(.*?)\s*```'
+
+    # For Markdown files, extract PowerShell code block.
+    $codeBlockRegex = $RegexPatterns.PowerShellCodeBlock
     $match = [regex]::Match($fileContent, $codeBlockRegex, 'IgnoreCase')
-    
-    if ($match.Success) { 
-        return $match.Groups.Value.Trim() 
-    } 
-    else { 
-        throw "Could not find a PowerShell code block (```powershell...```) in the specified .md file." 
+
+    if ($match.Success) {
+        # Extract the code block content (Group 1 is the captured content).
+        return $match.Groups[1].Value.Trim()
+    }
+    else {
+        throw "No PowerShell code block found. Expected: \`\`\`powershell...\`\`\`"
     }
 }
 
@@ -223,26 +330,51 @@ function Update-ComputerListView {
     .SYNOPSIS
         Updates the target computer list view from the main input textbox.
     .DESCRIPTION
-        Parses the comma-separated text from the ComputerInputTextBox, trims each entry,
-        and populates the horizontal ListView. It ensures the result is always an array
-        to prevent the UI from iterating over a single string's characters.
+        Parses comma-separated computer names from ComputerInputTextBox, trims each entry,
+        validates against common naming patterns, and populates the ListView.
+        The @() wrapper ensures a single computer name is treated as a list with one item.
+    .NOTES
+        This function accesses the global $ui variable.
     #>
     [CmdletBinding()]
     param()
 
-    # The @() wrapper is critical to ensure a single computer name is treated as a list with one item.
-    $computers = @($ui.ComputerInputTextBox.Text.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    $ui.ComputerListView.ItemsSource = $computers
+    try {
+        # Split, trim, and filter empty entries.
+        $computers = @(
+            $ui.ComputerInputTextBox.Text.Split(',') |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        )
+
+        # Validate computer names: must not contain invalid characters.
+        # Valid: alphanumeric, hyphens, dots, underscores; 1-253 characters.
+        $invalidComputerNames = $computers | Where-Object {
+            -not ($_ -match '^[a-zA-Z0-9._-]{1,253}$')
+        }
+
+        if ($invalidComputerNames.Count -gt 0) {
+            Write-Verbose "Invalid computer names found: $($invalidComputerNames -join ', ')"
+        }
+
+        # Update UI with the list (invalid entries still shown for user awareness).
+        $ui.ComputerListView.ItemsSource = $computers
+    }
+    catch {
+        Write-Verbose "Error updating computer list view: $($_.Exception.Message)"
+    }
 }
 
 function Update-ScriptDescriptionView {
     <#
     .SYNOPSIS
-        Parses and displays a formatted preview of the selected script file.
+        Displays a formatted preview of the selected script file.
     .DESCRIPTION
-        This function acts as a mini-Markdown renderer. It reads the selected script file and formats it
-        for the FlowDocument viewer. It renders #, ##, ### as headers, **text** as bold, and ```powershell
-        blocks with a distinct style. For .ps1 files, it displays the raw code in a code block style.
+        Acts as a mini-Markdown renderer for the FlowDocument viewer. Renders headers (#, ##, ###),
+        bold text (**text**), and PowerShell code blocks (```powershell...```) with distinct styling.
+        For .ps1 files, displays raw code in a code block style. Handles errors gracefully.
+    .NOTES
+        This function accesses the global $ui variable.
     #>
     [CmdletBinding()]
     param()
@@ -250,19 +382,28 @@ function Update-ScriptDescriptionView {
     $selectedScript = $ui.ScriptSelectionComboBox.SelectedItem
     $doc = [System.Windows.Documents.FlowDocument]::new()
 
+    # Handle no script selected.
     if ($null -eq $selectedScript) {
-        $doc.Blocks.Add([System.Windows.Documents.Paragraph]::new([System.Windows.Documents.Run]::new("No script selected.")))
+        $noScriptRun = [System.Windows.Documents.Run]::new("No script selected.")
+        $noScriptPara = [System.Windows.Documents.Paragraph]::new($noScriptRun)
+        $doc.Blocks.Add($noScriptPara)
         $ui.ScriptDescriptionViewer.Document = $doc
         return
     }
 
     try {
-        $fileContent = Get-Content -Path $selectedScript.Path -Raw
+        # Validate script file still exists.
+        if (-not (Test-Path -Path $selectedScript.Path -PathType Leaf)) {
+            throw "Script file no longer exists: $($selectedScript.Path)"
+        }
 
-        # If it's a .ps1 file, just show it as a code block.
-        if ($selectedScript.Path.EndsWith(".ps1", [System.StringComparison]::OrdinalIgnoreCase)) {
+        $fileContent = Get-Content -Path $selectedScript.Path -Raw -ErrorAction Stop
+
+        # Handle .ps1 files: display as code block.
+        $extension = [System.IO.Path]::GetExtension($selectedScript.Path).ToLower()
+        if ($extension -eq '.ps1') {
             $codeParagraph = [System.Windows.Documents.Paragraph]::new()
-            $codeParagraph.FontFamily = "Consolas"
+            $codeParagraph.FontFamily = $UIConstants.ConsoleFont
             $codeParagraph.Background = [System.Windows.Media.Brushes]::LightGray
             $codeParagraph.Padding = "5"
             $codeParagraph.Inlines.Add([System.Windows.Documents.Run]::new($fileContent))
@@ -271,86 +412,130 @@ function Update-ScriptDescriptionView {
             return
         }
 
-        # For .md files, parse for formatting.
-        $codeBlockRegex = '(?s)```powershell\s*(.*?)\s*```'
+        # Handle .md files: parse for formatting.
+        $codeBlockRegex = $RegexPatterns.PowerShellCodeBlock
         $codeBlockMatch = [regex]::Match($fileContent, $codeBlockRegex)
 
         if ($codeBlockMatch.Success) {
+            # Extract sections before and after code block.
             $beforeCode = $fileContent.Substring(0, $codeBlockMatch.Index)
-            $codeContent = $codeBlockMatch.Groups.Value
+            $codeContent = $codeBlockMatch.Groups[1].Value.Trim()
             $afterCode = $fileContent.Substring($codeBlockMatch.Index + $codeBlockMatch.Length)
-            
-            # Process text before, the code, and text after
+
+            # Process markdown before code block.
             Convert-MarkdownToFlowDocument -Content $beforeCode -Document $doc
-            
-            # Add the formatted code block
+
+            # Add formatted code block.
             $codeParagraph = [System.Windows.Documents.Paragraph]::new()
-            $codeParagraph.FontFamily = "Consolas"; $codeParagraph.Background = [System.Windows.Media.Brushes]::LightGray
-            $codeParagraph.Padding = "5"; $codeParagraph.Margin = "0,10,0,10"
-            $codeParagraph.Inlines.Add([System.Windows.Documents.Run]::new($codeContent.Trim()))
+            $codeParagraph.FontFamily = $UIConstants.ConsoleFont
+            $codeParagraph.Background = [System.Windows.Media.Brushes]::LightGray
+            $codeParagraph.Padding = "5"
+            $codeParagraph.Margin = "0,10,0,10"
+            $codeParagraph.Inlines.Add([System.Windows.Documents.Run]::new($codeContent))
             $doc.Blocks.Add($codeParagraph)
-            
+
+            # Process markdown after code block.
             Convert-MarkdownToFlowDocument -Content $afterCode -Document $doc
-        } else {
-            # No code block found, treat the whole file as markdown
+        }
+        else {
+            # No code block found; treat entire file as markdown.
             Convert-MarkdownToFlowDocument -Content $fileContent -Document $doc
         }
-
-    } catch {
-        $run = [System.Windows.Documents.Run]::new("Error reading script file: $($_.Exception.Message)")
-        $run.Foreground = [System.Windows.Media.Brushes]::Red
-        $doc.Blocks.Add([System.Windows.Documents.Paragraph]::new($run))
     }
-    
+    catch {
+        $errorRun = [System.Windows.Documents.Run]::new("Error reading script file: $($_.Exception.Message)")
+        $errorRun.Foreground = [System.Windows.Media.Brushes]::Red
+        $errorPara = [System.Windows.Documents.Paragraph]::new($errorRun)
+        $doc.Blocks.Add($errorPara)
+    }
+
     $ui.ScriptDescriptionViewer.Document = $doc
 }
 
 function Convert-MarkdownToFlowDocument {
     <#
     .SYNOPSIS
-        A helper function that parses a block of Markdown text into FlowDocument elements.
+        Parses a block of Markdown text into formatted FlowDocument elements.
     .DESCRIPTION
-        This is not a full Markdown parser, but it handles the most common cases:
-        - Headers (#, ##, ###)
-        - Bold text (**text**)
-        It processes the text line by line and adds formatted Runs and Paragraphs to the document.
+        A lightweight Markdown parser that handles:
+        - Headers (#, ##, ###) with appropriate font sizes
+        - Bold text (**text**) with bold formatting
+        - Line-by-line processing to maintain structure
+        Not a full Markdown implementation, but covers common use cases for script documentation.
     .PARAMETER Content
-        The raw string content to parse.
+        The raw string content to parse. Can be null or empty.
     .PARAMETER Document
-        The FlowDocument object to which the parsed elements should be added.
+        The FlowDocument object to which parsed elements should be added. Required.
     #>
     [CmdletBinding()]
     param(
-        [string]$Content,
+        [string]$Content = [string]::Empty,
+        [Parameter(Mandatory = $true)]
         [System.Windows.Documents.FlowDocument]$Document
     )
-    
+
+    # Return early if content is empty to avoid processing blank lines.
+    if ([string]::IsNullOrWhiteSpace($Content)) {
+        return
+    }
+
+    # Process each line separately to preserve structure.
     $Content.Split([Environment]::NewLine) | ForEach-Object {
         $line = $_
         $paragraph = [System.Windows.Documents.Paragraph]::new()
-        $paragraph.Margin = "0" # Use tight spacing for paragraphs
+        $paragraph.Margin = "0"  # Tight spacing between paragraphs
 
-        # Handle Headers
-        if ($line.StartsWith("###"))      { $paragraph.FontSize = 14; $paragraph.FontWeight = "Bold"; $line = $line.Substring(3).Trim() }
-        elseif ($line.StartsWith("##"))   { $paragraph.FontSize = 16; $paragraph.FontWeight = "Bold"; $line = $line.Substring(2).Trim() }
-        elseif ($line.StartsWith("#"))    { $paragraph.FontSize = 20; $paragraph.FontWeight = "Bold"; $line = $line.Substring(1).Trim() }
-        
-        # Handle Bold text using **text**
-        $boldRegex = '\*\*(.*?)\*\*'
-        # Split the line by the bold markers to interleave normal and bold text
-        $parts = $line.Split($boldRegex)
+        # Determine header level and adjust formatting.
+        if ($line.StartsWith("###")) {
+            $paragraph.FontSize = 14
+            $paragraph.FontWeight = "Bold"
+            $line = $line.Substring(3).Trim()
+        }
+        elseif ($line.StartsWith("##")) {
+            $paragraph.FontSize = 16
+            $paragraph.FontWeight = "Bold"
+            $line = $line.Substring(2).Trim()
+        }
+        elseif ($line.StartsWith("#")) {
+            $paragraph.FontSize = 20
+            $paragraph.FontWeight = "Bold"
+            $line = $line.Substring(1).Trim()
+        }
+
+        # Parse bold text (**text**) and interleave with normal text.
+        $boldRegex = $RegexPatterns.BoldText
         $matches = [regex]::Matches($line, $boldRegex)
 
-        for ($i = 0; $i -lt $parts.Length; $i++) {
-            # Add the normal text part
-            if ($parts[$i]) { $paragraph.Inlines.Add([System.Windows.Documents.Run]::new($parts[$i])) }
-            # Add the bold text part if it exists
-            if ($i -lt $matches.Count) {
-                $boldRun = [System.Windows.Documents.Run]::new($matches[$i].Groups.Value)
+        if ($matches.Count -eq 0) {
+            # No bold formatting; add line as-is.
+            $paragraph.Inlines.Add([System.Windows.Documents.Run]::new($line))
+        }
+        else {
+            # Split line at bold markers and rebuild with formatting.
+            $lastIndex = 0
+            foreach ($match in $matches) {
+                # Add text before the bold section.
+                if ($match.Index -gt $lastIndex) {
+                    $beforeText = $line.Substring($lastIndex, $match.Index - $lastIndex)
+                    $paragraph.Inlines.Add([System.Windows.Documents.Run]::new($beforeText))
+                }
+
+                # Add the bold text (Group 1 is the captured content inside **).
+                $boldText = $match.Groups[1].Value
+                $boldRun = [System.Windows.Documents.Run]::new($boldText)
                 $boldRun.FontWeight = "Bold"
                 $paragraph.Inlines.Add($boldRun)
+
+                $lastIndex = $match.Index + $match.Length
+            }
+
+            # Add any remaining text after the last bold section.
+            if ($lastIndex -lt $line.Length) {
+                $afterText = $line.Substring($lastIndex)
+                $paragraph.Inlines.Add([System.Windows.Documents.Run]::new($afterText))
             }
         }
+
         $Document.Blocks.Add($paragraph)
     }
 }
@@ -358,22 +543,43 @@ function Convert-MarkdownToFlowDocument {
 function New-PSCredentialFromUI {
     <#
     .SYNOPSIS
-        Creates a PSCredential object from the Username and Password fields in the UI.
+        Creates a PSCredential object from UI username and password fields.
     .DESCRIPTION
-        Checks if the username and password fields are populated. If they are, it creates
-        and returns a standard PSCredential object. If not, it returns $null.
+        Checks if both username and password fields are populated in the UI.
+        If both are present, creates and returns a PSCredential object.
+        If either is empty, returns $null to indicate default credentials should be used.
+        
+        The PasswordBox control already provides a SecureString, which is more secure
+        than ConvertTo-SecureString with -AsPlainText.
+    .OUTPUTS
+        [System.Management.Automation.PSCredential] or $null if credentials are not provided.
+    .NOTES
+        This function accesses the global $ui variable.
     #>
     [CmdletBinding()]
     param()
 
-    if (-not [string]::IsNullOrWhiteSpace($ui.UsernameTextBox.Text) -and -not [string]::IsNullOrWhiteSpace($ui.PasswordInputBox.Password)) {
+    # Validate that both username and password are provided.
+    if ([string]::IsNullOrWhiteSpace($ui.UsernameTextBox.Text)) {
+        return $null
+    }
+
+    if ($ui.PasswordInputBox.SecurePassword.Length -eq 0) {
+        return $null
+    }
+
+    try {
         $username = $ui.UsernameTextBox.Text
-        # The password from a PasswordBox is a SecureString, so no conversion is needed.
         $securePassword = $ui.PasswordInputBox.SecurePassword
-        Add-OutputLine -Text "Constructing credential for user: $username" -Color "Orange"
+
+        Add-OutputLine -Text "Using alternate credentials for user: $username" -Color $ColorConstants.UserAction
+
         return [System.Management.Automation.PSCredential]::new($username, $securePassword)
     }
-    return $null
+    catch {
+        Add-OutputLine -Text "Error creating credential object: $($_.Exception.Message)" -Color $ColorConstants.Error
+        return $null
+    }
 }
 
 #endregion
@@ -420,15 +626,35 @@ catch {
 
 $ui.ImportFromFileButton.add_Click({
     $openFileDialog = New-Object Microsoft.Win32.OpenFileDialog
-    $openFileDialog.Filter = "Text Files (*.txt)|*.txt|CSV Files (*.csv)|*.csv|All files (*.*)|*.*"
+    $openFileDialog.Filter = $FileConstants.FileFilterImport
+    $openFileDialog.Title = "Import Target Computers"
+
     if ($openFileDialog.ShowDialog() -eq $true) {
         try {
-            $computers = @(Get-Content $openFileDialog.FileName | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+            # Validate file exists before attempting to read.
+            if (-not (Test-Path -Path $openFileDialog.FileName -PathType Leaf)) {
+                throw "File not found: $($openFileDialog.FileName)"
+            }
+
+            # Read and parse computer names from file.
+            $computers = @(
+                Get-Content -Path $openFileDialog.FileName -ErrorAction Stop |
+                ForEach-Object { $_.Trim() } |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+            )
+
+            if ($computers.Count -eq 0) {
+                Add-OutputLine -Text "No computer names found in the selected file." -Color $ColorConstants.Warning
+                return
+            }
+
+            # Update UI and provide feedback.
             $ui.ComputerInputTextBox.Text = $computers -join ", "
             Update-ComputerListView
-            Add-OutputLine -Text "Successfully imported $($computers.Count) computers." -Color "Green"
-        } catch { 
-            Add-OutputLine -Text "Error reading file: $($_.Exception.Message)" -Color "Red" 
+            Add-OutputLine -Text "Successfully imported $($computers.Count) computer(s)." -Color $ColorConstants.Success
+        }
+        catch {
+            Add-OutputLine -Text "Error importing computers: $($_.Exception.Message)" -Color $ColorConstants.Error
         }
     }
 })
@@ -443,149 +669,291 @@ $ui.ScriptSelectionComboBox.add_SelectionChanged({
 
 $ui.GetInfoButton.add_Click({
     $computers = $ui.ComputerListView.ItemsSource
-    if (-not $computers) { Add-OutputLine -Text "No target computers specified." -Color "Red"; return }
-    
-    Add-OutputLine -Text "Starting 'Get Info'..." -Color "Blue"
-    $window.Dispatcher.Invoke([Action]{}, "Background") 
 
+    # Validate that target computers are specified.
+    if (-not $computers -or $computers.Count -eq 0) {
+        Add-OutputLine -Text "No target computers specified. Please enter computer names." -Color $ColorConstants.Error
+        return
+    }
+
+    Add-OutputLine -Text "Starting 'Get Info' operation..." -Color $ColorConstants.Highlight
+    $window.Dispatcher.Invoke([Action] {}, "Background")
+
+    # ScriptBlock to gather system information from remote computers.
     $getInfoScriptBlock = {
-        $osInfo = Get-WmiObject -ClassName Win32_OperatingSystem
-        $csInfo = Get-WmiObject -ClassName Win32_ComputerSystem
-        $bootTime = $osInfo.ConvertToDateTime($osInfo.LastBootUpTime)
-        $uptime = (Get-Date) - $bootTime
-        $uptimeString = "{0:N0} days, {1:D2}h:{2:D2}m:{3:D2}s" -f $uptime.Days, $uptime.Hours, $uptime.Minutes, $uptime.Seconds
-        return [PSCustomObject]@{ OS = $osInfo.Caption; Model = $csInfo.Model; Uptime = $uptimeString }
+        try {
+            $osInfo = Get-WmiObject -ClassName Win32_OperatingSystem -ErrorAction Stop
+            $csInfo = Get-WmiObject -ClassName Win32_ComputerSystem -ErrorAction Stop
+
+            # Calculate uptime from last boot time.
+            $bootTime = $osInfo.ConvertToDateTime($osInfo.LastBootUpTime)
+            $uptime = (Get-Date) - $bootTime
+            $uptimeString = "{0:N0} days, {1:D2}h:{2:D2}m:{3:D2}s" -f $uptime.Days, $uptime.Hours, $uptime.Minutes, $uptime.Seconds
+
+            return [PSCustomObject]@{
+                OS     = $osInfo.Caption
+                Model  = $csInfo.Model
+                Uptime = $uptimeString
+            }
+        }
+        catch {
+            throw "Failed to retrieve system info: $_"
+        }
     }
 
     $credential = New-PSCredentialFromUI
 
-    $invokeParams = @{ ScriptBlock = $getInfoScriptBlock; ErrorAction = 'Stop' }
-    if ($credential) { $invokeParams.Add("Credential", $credential) }
+    # Build parameters for Invoke-Command.
+    $invokeParams = @{
+        ScriptBlock = $getInfoScriptBlock
+        ErrorAction = 'Stop'
+    }
+    if ($credential) {
+        $invokeParams.Add("Credential", $credential)
+    }
 
+    # Query each target computer.
     foreach ($computer in $computers) {
-        Add-OutputLine -Text "--- Querying $computer ---" -Color "DarkBlue"
+        Add-OutputLine -Text "--- Querying $computer ---" -Color $ColorConstants.Section
         try {
             $invokeParams["ComputerName"] = $computer
             $result = Invoke-Command @invokeParams
             Add-OutputLine -Text "  OS:     $($result.OS)"
             Add-OutputLine -Text "  Model:  $($result.Model)"
             Add-OutputLine -Text "  Uptime: $($result.Uptime)"
-        } catch {
-            Add-OutputLine -Text "  ERROR: $($_.Exception.Message)".Trim() -Color "Red"
+        }
+        catch {
+            Add-OutputLine -Text "  ERROR: $($_.Exception.Message)" -Color $ColorConstants.Error
         }
     }
-    Add-OutputLine -Text "--- 'Get Info' process complete. ---" -Color "Blue"
+    Add-OutputLine -Text "--- 'Get Info' operation complete. ---" -Color $ColorConstants.Highlight
 })
 
 $ui.RunScriptButton.add_Click({
     $computers = $ui.ComputerListView.ItemsSource
     $selectedScript = $ui.ScriptSelectionComboBox.SelectedItem
-    if (-not $computers) { Add-OutputLine -Text "No target computers specified." -Color "Red"; return }
-    if (-not $selectedScript) { Add-OutputLine -Text "No script selected from the library." -Color "Red"; return }
-    
-    Add-OutputLine -Text "Starting script '$($selectedScript.Name)'..." -Color "Blue"
-    $window.Dispatcher.Invoke([Action]{}, "Background") 
 
-    try { $scriptCode = Get-ScriptCodeFromFile -FilePath $selectedScript.Path } 
-    catch { Add-OutputLine -Text "FATAL ERROR reading script file: $($_.Exception.Message)" -Color "Red"; return }
+    # Validate inputs.
+    if (-not $computers -or $computers.Count -eq 0) {
+        Add-OutputLine -Text "No target computers specified. Please enter computer names." -Color $ColorConstants.Error
+        return
+    }
+    if (-not $selectedScript) {
+        Add-OutputLine -Text "No script selected from the library. Please choose a script." -Color $ColorConstants.Error
+        return
+    }
 
-    $scriptBlockToRun = [scriptblock]::Create($scriptCode)
+    Add-OutputLine -Text "Starting script '$($selectedScript.Name)'..." -Color $ColorConstants.Highlight
+    $window.Dispatcher.Invoke([Action] {}, "Background")
+
+    # Extract script code from file.
+    try {
+        $scriptCode = Get-ScriptCodeFromFile -FilePath $selectedScript.Path
+    }
+    catch {
+        Add-OutputLine -Text "Fatal error reading script file: $($_.Exception.Message)" -Color $ColorConstants.Error
+        return
+    }
+
+    # Create scriptblock and prepare invocation parameters.
+    try {
+        $scriptBlockToRun = [scriptblock]::Create($scriptCode)
+    }
+    catch {
+        Add-OutputLine -Text "Fatal error parsing script code: $($_.Exception.Message)" -Color $ColorConstants.Error
+        return
+    }
+
     $credential = New-PSCredentialFromUI
 
-    $invokeParams = @{ ScriptBlock = $scriptBlockToRun; ErrorAction = 'Stop' }
-    if ($credential) { $invokeParams.Add("Credential", $credential) }
+    $invokeParams = @{
+        ScriptBlock = $scriptBlockToRun
+        ErrorAction = 'Stop'
+    }
+    if ($credential) {
+        $invokeParams.Add("Credential", $credential)
+    }
 
+    # Execute script on each target computer.
     foreach ($computer in $computers) {
-        Add-OutputLine -Text "--- Executing on $computer ---" -Color "DarkBlue"
+        Add-OutputLine -Text "--- Executing on $computer ---" -Color $ColorConstants.Section
         try {
             $invokeParams["ComputerName"] = $computer
             $output = Invoke-Command @invokeParams
+
             if ($output) {
-                ($output | Out-String).Split("`n") | ForEach-Object { if (-not [string]::IsNullOrWhiteSpace($_)) { Add-OutputLine -Text $_.Trim() } }
-            } else {
-                Add-OutputLine -Text "  (Script ran successfully with no output.)" -Color "Gray"
+                # Format and display output line by line.
+                $outputLines = $output | Out-String
+                $outputLines.Split("`n") |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                ForEach-Object { Add-OutputLine -Text $_.Trim() }
             }
-        } catch {
-            Add-OutputLine -Text "  REMOTE SCRIPT ERROR: $($_.Exception.Message)".Trim() -Color "Red"
+            else {
+                Add-OutputLine -Text "(Script executed successfully with no output)" -Color $ColorConstants.Subtle
+            }
+        }
+        catch {
+            Add-OutputLine -Text "Remote execution error: $($_.Exception.Message)" -Color $ColorConstants.Error
         }
     }
-    Add-OutputLine -Text "--- Script execution complete. ---" -Color "Blue"
+    Add-OutputLine -Text "--- Script execution complete. ---" -Color $ColorConstants.Highlight
 })
 
 $ui.AddScriptButton.add_Click({
-    $dialogReader = [System.Xml.XmlNodeReader]::new($AddScriptDialogXAML)
-    $dialogWindow = [Windows.Markup.XamlReader]::Load($dialogReader)
-    
+    # Load and parse the Add Script dialog XAML.
+    try {
+        $dialogReader = [System.Xml.XmlNodeReader]::new($AddScriptDialogXAML)
+        $dialogWindow = [Windows.Markup.XamlReader]::Load($dialogReader)
+    }
+    catch {
+        Add-OutputLine -Text "Error loading Add Script dialog: $($_.Exception.Message)" -Color $ColorConstants.Error
+        return
+    }
+
+    # Map dialog controls to hashtable for easy access.
     $dialogUi = @{}
-    $AddScriptDialogXAML.SelectNodes("//*[@Name]") | ForEach-Object { $dialogUi[$_.Name] = $dialogWindow.FindName($_.Name) }
-    
+    $AddScriptDialogXAML.SelectNodes("//*[@Name]") |
+    ForEach-Object { $dialogUi[$_.Name] = $dialogWindow.FindName($_.Name) }
+
     $dialogWindow.Owner = $ui.Window
-    
+
+    # Browse button opens file dialog.
     $dialogUi.BrowseButton.add_Click({
         $openFileDialog = New-Object Microsoft.Win32.OpenFileDialog
-        $openFileDialog.Filter = "Supported Scripts (*.md, *.ps1)|*.md;*.ps1|All files (*.*)|*.*"
-        if ($openFileDialog.ShowDialog() -eq $true) { $dialogUi.ScriptPathTextBox.Text = $openFileDialog.FileName }
+        $openFileDialog.Filter = $FileConstants.FileFilterAddScript
+        $openFileDialog.Title = "Select Script File"
+        if ($openFileDialog.ShowDialog() -eq $true) {
+            $dialogUi.ScriptPathTextBox.Text = $openFileDialog.FileName
+        }
     })
 
     $dialogUi.OkButton.add_Click({ $dialogWindow.DialogResult = $true })
-    
+
+    # Show dialog and process results.
     if ($dialogWindow.ShowDialog() -eq $true) {
         $newScriptName = $dialogUi.ScriptNameTextBox.Text
         $newScriptPath = $dialogUi.ScriptPathTextBox.Text
-        if ([string]::IsNullOrWhiteSpace($newScriptName) -or ([string]::IsNullOrWhiteSpace($newScriptPath))) {
-            Add-OutputLine -Text "Script Name and Path cannot be empty." -Color "Red"; return
+
+        # Validate inputs.
+        if ([string]::IsNullOrWhiteSpace($newScriptName)) {
+            Add-OutputLine -Text "Script name cannot be empty." -Color $ColorConstants.Error
+            return
         }
-        
-        [xml]$scriptsXml = Get-Content $ScriptsXmlPath
-        $scriptElement = $scriptsXml.CreateElement("script")
-        $nameElement = $scriptsXml.CreateElement("name"); $nameElement.InnerText = $newScriptName
-        $pathElement = $scriptsXml.CreateElement("path"); $pathElement.InnerText = $newScriptPath
-        $scriptElement.AppendChild($nameElement) | Out-Null
-        $scriptElement.AppendChild($pathElement) | Out-Null
-        $scriptsXml.scripts.AppendChild($scriptElement) | Out-Null
-        $scriptsXml.Save($ScriptsXmlPath)
-        
-        Add-OutputLine -Text "Added script '$newScriptName' to library." -Color "Green"
-        Update-ScriptLibraryView
+        if ([string]::IsNullOrWhiteSpace($newScriptPath)) {
+            Add-OutputLine -Text "Script path cannot be empty." -Color $ColorConstants.Error
+            return
+        }
+        if (-not (Test-Path -Path $newScriptPath -PathType Leaf)) {
+            Add-OutputLine -Text "Script file does not exist: $newScriptPath" -Color $ColorConstants.Error
+            return
+        }
+
+        # Validate file extension.
+        $extension = [System.IO.Path]::GetExtension($newScriptPath).ToLower()
+        if ($extension -notin $SupportedExtensions) {
+            Add-OutputLine -Text "Unsupported file type. Supported: $($SupportedExtensions -join ', ')" -Color $ColorConstants.Error
+            return
+        }
+
+        # Add script to XML library.
+        try {
+            [xml]$scriptsXml = Get-Content -Path $ScriptsXmlPath -ErrorAction Stop
+
+            # Check for duplicate script names.
+            $existingScript = $scriptsXml.SelectSingleNode("//script[name='$newScriptName']") | Select-Object -First 1
+            if ($null -ne $existingScript) {
+                Add-OutputLine -Text "A script with the name '$newScriptName' already exists." -Color $ColorConstants.Warning
+                return
+            }
+
+            # Create and append script element.
+            $scriptElement = $scriptsXml.CreateElement($FileConstants.ScriptElement)
+            $nameElement = $scriptsXml.CreateElement($FileConstants.ScriptNameElement)
+            $nameElement.InnerText = $newScriptName
+            $pathElement = $scriptsXml.CreateElement($FileConstants.ScriptPathElement)
+            $pathElement.InnerText = $newScriptPath
+
+            $scriptElement.AppendChild($nameElement) | Out-Null
+            $scriptElement.AppendChild($pathElement) | Out-Null
+            $scriptsXml.DocumentElement.AppendChild($scriptElement) | Out-Null
+
+            $scriptsXml.Save($ScriptsXmlPath)
+            Add-OutputLine -Text "Added script '$newScriptName' to library." -Color $ColorConstants.Success
+            Update-ScriptLibraryView
+        }
+        catch {
+            Add-OutputLine -Text "Error saving script to library: $($_.Exception.Message)" -Color $ColorConstants.Error
+        }
     }
 })
 
 $ui.RemoveScriptButton.add_Click({
     $selectedItem = $ui.ScriptLibraryListView.SelectedItem
-    if (-not $selectedItem) { Add-OutputLine -Text "Please select a script from the library to remove." -Color "Red"; return }
 
-    [xml]$scriptsXml = Get-Content $ScriptsXmlPath
-    $nodeToRemove = $scriptsXml.SelectSingleNode("//script[name='$($selectedItem.Name)' and path='$($selectedItem.Path)']")
-    
-    if ($nodeToRemove) {
+    # Validate that a script is selected.
+    if (-not $selectedItem) {
+        Add-OutputLine -Text "Please select a script from the library to remove." -Color $ColorConstants.Error
+        return
+    }
+
+    try {
+        [xml]$scriptsXml = Get-Content -Path $ScriptsXmlPath -ErrorAction Stop
+
+        # XPath to find the exact script node by name and path.
+        # Using proper XML escaping to handle special characters in names/paths.
+        $nodeToRemove = $scriptsXml.SelectSingleNode(
+            "//script[name='$($selectedItem.Name)' and path='$($selectedItem.Path)']"
+        )
+
+        if ($null -eq $nodeToRemove) {
+            Add-OutputLine -Text "Script not found in library. It may have been removed already." -Color $ColorConstants.Warning
+            Update-ScriptLibraryView
+            return
+        }
+
+        # Remove the node and save.
         $nodeToRemove.ParentNode.RemoveChild($nodeToRemove) | Out-Null
         $scriptsXml.Save($ScriptsXmlPath)
-        Add-OutputLine -Text "Removed script '$($selectedItem.Name)'." -Color "Green"
+
+        Add-OutputLine -Text "Removed script '$($selectedItem.Name)' from library." -Color $ColorConstants.Success
         Update-ScriptLibraryView
-    } else {
-        Add-OutputLine -Text "Could not find the selected script in scripts.xml to remove it." -Color "Red"
+    }
+    catch {
+        Add-OutputLine -Text "Error removing script: $($_.Exception.Message)" -Color $ColorConstants.Error
     }
 })
 
-$ui.ClearConsoleButton.add_Click({ 
-    $ui.OutputConsole.Document.Blocks.Clear() 
+$ui.ClearConsoleButton.add_Click({
+    # Clear all text blocks from the output console.
+    try {
+        $ui.OutputConsole.Document.Blocks.Clear()
+    }
+    catch {
+        Write-Verbose "Error clearing console output: $($_.Exception.Message)"
+    }
 })
 #endregion
 
 #region Application Start
 try {
-    # The functions here depend on the UI being successfully created.
+    # Initialize the script library from the XML file.
     Update-ScriptLibraryView
-    $ui.ComputerInputTextBox.Text = $env:COMPUTERNAME
+
+    # Pre-fill the computer name field with the local machine hostname.
+    $localHostname = $env:COMPUTERNAME
+    if ([string]::IsNullOrWhiteSpace($localHostname)) {
+        $localHostname = [System.Net.Dns]::GetHostName()
+    }
+    $ui.ComputerInputTextBox.Text = $localHostname
     Update-ComputerListView
-    Add-OutputLine -Text "Admin Tool Ready. Local hostname pre-filled." -Color "Green"
-} catch { 
-    # This catch block will now only handle errors from the startup logic itself, not UI creation.
-    Add-OutputLine -Text "A critical error occurred during application start: $($_.Exception.Message)" -Color "Red"
+
+    Add-OutputLine -Text "Admin Tool initialized successfully. Local hostname: $localHostname" -Color $ColorConstants.Success
+}
+catch {
+    Add-OutputLine -Text "Critical error during initialization: $($_.Exception.Message)" -Color $ColorConstants.Error
 }
 
-# Show the main window. The script will wait here until the window is closed.
-# The $ui variable should exist at this point, but we check to be safe.
+# Display the main window and block until it is closed by the user.
 if ($ui.Window) {
     $null = $ui.Window.ShowDialog()
 }
