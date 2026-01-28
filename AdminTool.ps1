@@ -9,16 +9,17 @@
     emphasizing structure, readability, proper function design, and maintainability.
 .NOTES
     Author: Gemini Enterprise (Refactored by an Expert PowerShell Developer)
-    Version: 4.0 (Best Practices Refactor)
+    Version: 4.3 (Fixed null reference error in UI object initialization)
 #>
 
 #region XAML Data
 Add-Type -AssemblyName PresentationFramework
+# XAML is defined as here-strings. It will be cast to [xml] inside a try-catch block for safety.
 
-[xml]$XAML = @"
+$XAML_MainWindow = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="PowerShell Remote Admin Tool v4.0 (Best Practices)" Height="800" Width="1000" WindowStartupLocation="CenterScreen">
+        Title="PowerShell Remote Admin Tool v4.3 (Best Practices)" Height="800" Width="1000" WindowStartupLocation="CenterScreen">
     <Grid Margin="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
@@ -90,7 +91,7 @@ Add-Type -AssemblyName PresentationFramework
 </Window>
 "@
 
-[xml]$AddScriptDialogXAML = @"
+$XAML_AddScriptDialog = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Add New Script" SizeToContent="WidthAndHeight" WindowStartupLocation="CenterOwner" WindowStyle="ToolWindow">
@@ -367,8 +368,7 @@ function New-PSCredentialFromUI {
 
     if (-not [string]::IsNullOrWhiteSpace($ui.UsernameTextBox.Text) -and -not [string]::IsNullOrWhiteSpace($ui.PasswordInputBox.Password)) {
         $username = $ui.UsernameTextBox.Text
-        # The password from a PasswordBox is already a SecureString, so no conversion is needed.
-        # This is more secure than using ConvertTo-SecureString with -AsPlainText.
+        # The password from a PasswordBox is a SecureString, so no conversion is needed.
         $securePassword = $ui.PasswordInputBox.SecurePassword
         Add-OutputLine -Text "Constructing credential for user: $username" -Color "Orange"
         return [System.Management.Automation.PSCredential]::new($username, $securePassword)
@@ -380,23 +380,37 @@ function New-PSCredentialFromUI {
 
 # --- Main Script Execution ---
 
-#region UI Initialization
-$ScriptPath = $PSScriptRoot
+#region Script Path Initialization
+# If $PSScriptRoot is not defined (e.g., when running in ISE), fall back to the current working directory.
+if ($PSScriptRoot) {
+    $ScriptPath = $PSScriptRoot
+} else {
+    $ScriptPath = Get-Location
+}
 $ScriptsXmlPath = Join-Path $ScriptPath "scripts.xml"
+#endregion
 
+#region UI Initialization
 try {
-    $reader = [System.Xml.XmlNodeReader]::new($XAML)
+    # It is safer to cast to [xml] inside the try block.
+    [xml]$xaml = $XAML_MainWindow
+    [xml]$AddScriptDialogXAML = $XAML_AddScriptDialog
+
+    $reader = [System.Xml.XmlNodeReader]::new($xaml)
     $window = [Windows.Markup.XamlReader]::Load($reader)
 
     # Store all UI controls in a hashtable for clean access, avoiding global scope pollution.
     $ui = @{}
-    $XAML.SelectNodes("//*[@Name]") | ForEach-Object {
+    $xaml.SelectNodes("//*[@Name]") | ForEach-Object {
         $ui[$_.Name] = $window.FindName($_.Name)
     }
+
+    # === CRITICAL FIX: Add the main window object itself to the UI hashtable. ===
+    $ui['Window'] = $window
 }
 catch {
-    Write-Error "Failed to load the main window XAML. Error: $($_.Exception.Message)"
-    # Exit if the UI can't be created.
+    # If the UI fails to load, there's nothing else we can do.
+    Write-Error "CRITICAL: Failed to load the main window XAML. The application cannot start. Error: $($_.Exception.Message)"
     return
 }
 #endregion
@@ -502,7 +516,6 @@ $ui.AddScriptButton.add_Click({
     $dialogReader = [System.Xml.XmlNodeReader]::new($AddScriptDialogXAML)
     $dialogWindow = [Windows.Markup.XamlReader]::Load($dialogReader)
     
-    # Find controls within the temporary dialog window
     $dialogUi = @{}
     $AddScriptDialogXAML.SelectNodes("//*[@Name]") | ForEach-Object { $dialogUi[$_.Name] = $dialogWindow.FindName($_.Name) }
     
@@ -519,7 +532,7 @@ $ui.AddScriptButton.add_Click({
     if ($dialogWindow.ShowDialog() -eq $true) {
         $newScriptName = $dialogUi.ScriptNameTextBox.Text
         $newScriptPath = $dialogUi.ScriptPathTextBox.Text
-        if ([string]::IsNullOrWhiteSpace($newScriptName) -or [string]::IsNullOrWhiteSpace($newScriptPath)) {
+        if ([string]::IsNullOrWhiteSpace($newScriptName) -or ([string]::IsNullOrWhiteSpace($newScriptPath))) {
             Add-OutputLine -Text "Script Name and Path cannot be empty." -Color "Red"; return
         }
         
@@ -542,7 +555,6 @@ $ui.RemoveScriptButton.add_Click({
     if (-not $selectedItem) { Add-OutputLine -Text "Please select a script from the library to remove." -Color "Red"; return }
 
     [xml]$scriptsXml = Get-Content $ScriptsXmlPath
-    # Use a more specific XPath to ensure the correct node is removed.
     $nodeToRemove = $scriptsXml.SelectSingleNode("//script[name='$($selectedItem.Name)' and path='$($selectedItem.Path)']")
     
     if ($nodeToRemove) {
@@ -562,14 +574,19 @@ $ui.ClearConsoleButton.add_Click({
 
 #region Application Start
 try {
+    # The functions here depend on the UI being successfully created.
     Update-ScriptLibraryView
     $ui.ComputerInputTextBox.Text = $env:COMPUTERNAME
     Update-ComputerListView
     Add-OutputLine -Text "Admin Tool Ready. Local hostname pre-filled." -Color "Green"
 } catch { 
-    Add-OutputLine -Text "A critical error occurred during initialization: $($_.Exception.Message)" -Color "Red"
+    # This catch block will now only handle errors from the startup logic itself, not UI creation.
+    Add-OutputLine -Text "A critical error occurred during application start: $($_.Exception.Message)" -Color "Red"
 }
 
 # Show the main window. The script will wait here until the window is closed.
-$null = $ui.Window.ShowDialog()
+# The $ui variable should exist at this point, but we check to be safe.
+if ($ui.Window) {
+    $null = $ui.Window.ShowDialog()
+}
 #endregion
