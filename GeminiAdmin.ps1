@@ -182,6 +182,74 @@ function Update-ScriptLibraryView {
     Update-ScriptDescriptionView
 }
 
+function Auto-DiscoverScripts {
+    <#
+    .SYNOPSIS
+        Automatically discovers and adds scripts from the .\Scripts directory to scripts.xml.
+    .DESCRIPTION
+        Scans the .\Scripts directory for .ps1 and .md files. For each file found,
+        it adds an entry to scripts.xml if it doesn't already exist. The script name
+        is derived from the filename (without extension).
+    #>
+    [CmdletBinding()]
+    param()
+
+    $scriptsDirectory = Join-Path $ScriptPath "Scripts"
+    
+    # If the Scripts directory doesn't exist, create it
+    if (-not (Test-Path $scriptsDirectory -PathType Container)) {
+        New-Item -ItemType Directory -Path $scriptsDirectory -Force | Out-Null
+        Add-OutputLine -Text "Created .\Scripts directory." -Color "Blue"
+        return
+    }
+
+    # Get all .ps1 and .md files in the Scripts directory
+    $scriptFiles = @(Get-ChildItem -Path $scriptsDirectory -Include @("*.ps1", "*.md") -File)
+    
+    if ($scriptFiles.Count -eq 0) {
+        Add-OutputLine -Text "No scripts found in .\Scripts directory." -Color "Gray"
+        return
+    }
+
+    try {
+        [xml]$scriptsXml = Get-Content -Path $ScriptsXmlPath -ErrorAction Stop
+        $updated = $false
+
+        foreach ($file in $scriptFiles) {
+            # Derive friendly name from filename (remove extension)
+            $friendlyName = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
+            
+            # Check if this script already exists in the XML
+            $existingScript = $scriptsXml.SelectSingleNode("//script[path='$($file.FullName)']")
+            
+            if ($null -eq $existingScript) {
+                # Script doesn't exist, add it
+                $scriptElement = $scriptsXml.CreateElement("script")
+                $nameElement = $scriptsXml.CreateElement("name")
+                $nameElement.InnerText = $friendlyName
+                $pathElement = $scriptsXml.CreateElement("path")
+                $pathElement.InnerText = $file.FullName
+                
+                $scriptElement.AppendChild($nameElement) | Out-Null
+                $scriptElement.AppendChild($pathElement) | Out-Null
+                $scriptsXml.scripts.AppendChild($scriptElement) | Out-Null
+                
+                Add-OutputLine -Text "Auto-discovered script: $friendlyName" -Color "Blue"
+                $updated = $true
+            }
+        }
+
+        # Save XML if any scripts were added
+        if ($updated) {
+            $scriptsXml.Save($ScriptsXmlPath)
+            Add-OutputLine -Text "Updated scripts.xml with newly discovered scripts." -Color "Green"
+        }
+    }
+    catch {
+        Add-OutputLine -Text "Error during auto-discovery: $($_.Exception.Message)" -Color "Red"
+    }
+}
+
 function Get-ScriptCodeFromFile {
     <#
     .SYNOPSIS
@@ -575,6 +643,7 @@ $ui.ClearConsoleButton.add_Click({
 #region Application Start
 try {
     # The functions here depend on the UI being successfully created.
+    Auto-DiscoverScripts
     Update-ScriptLibraryView
     $ui.ComputerInputTextBox.Text = $env:COMPUTERNAME
     Update-ComputerListView
