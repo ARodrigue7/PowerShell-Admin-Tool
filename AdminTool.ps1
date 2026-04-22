@@ -1,25 +1,18 @@
 <#
 .SYNOPSIS
-    A graphical tool for remote PowerShell script execution and management.
+    Remote PowerShell script runner with a WPF interface.
 .DESCRIPTION
-    This tool provides a WPF-based user interface to manage a library of custom scripts 
-    and execute them against target computers using default or alternate credentials.
-    
-    This script has been refactored to align with the PowerShell Practice and Style guide,
-    emphasizing structure, readability, proper function design, and maintainability.
-.NOTES
-    Author: Gemini Enterprise (Refactored by an Expert PowerShell Developer)
-    Version: 4.3 (Fixed null reference error in UI object initialization)
+    Manages a script library, previews script content, prompts for markdown-defined
+    inputs, and runs selected scripts against one or more remote computers.
 #>
 
 #region XAML Data
 Add-Type -AssemblyName PresentationFramework
-# XAML is defined as here-strings. It will be cast to [xml] inside a try-catch block for safety.
 
 $XAML_MainWindow = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="PowerShell Remote Admin Tool v4.3 (Best Practices)" Height="800" Width="1000" WindowStartupLocation="CenterScreen">
+        Title="PowerShell Remote Admin Tool" Height="800" Width="1000" WindowStartupLocation="CenterScreen">
     <Grid Margin="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
@@ -40,6 +33,7 @@ $XAML_MainWindow = @"
                                 <Border BorderBrush="CornflowerBlue" Background="AliceBlue" BorderThickness="1" CornerRadius="3" Margin="3" Padding="6,3"><TextBlock Text="{Binding}" /></Border>
                             </DataTemplate></ListView.ItemTemplate>
                         </ListView>
+                        <TextBlock Name="ComputerSummaryTextBlock" Margin="0,6,0,0" Foreground="DimGray" Text="No target computers loaded." />
                         <Separator Margin="0,15,0,5" />
                         <Label Content="Alternate Credentials (Optional)" FontWeight="Bold" />
                         <Grid>
@@ -53,6 +47,7 @@ $XAML_MainWindow = @"
                         <Separator Margin="0,15,0,5" />
                         <Label Content="Select &amp; Run Action" FontWeight="Bold" />
                         <ComboBox Name="ScriptSelectionComboBox" DisplayMemberPath="Name" Margin="0,5,0,0" />
+                        <TextBlock Name="ScriptSummaryTextBlock" Margin="0,6,0,0" Foreground="DimGray" TextWrapping="Wrap" Text="No script selected." />
                         <Button Name="GetInfoButton" Content="Get Info" FontWeight="Bold" Margin="0,10,0,0" />
                         <Button Name="RunScriptButton" Content="Run Selected Script" FontWeight="Bold" Margin="0,10,0,0" />
                     </StackPanel>
@@ -83,9 +78,16 @@ $XAML_MainWindow = @"
         </TabControl>
         <GridSplitter Grid.Row="1" Height="5" HorizontalAlignment="Stretch" Background="LightGray" />
         <Grid Grid.Row="2">
+            <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-            <RichTextBox Name="OutputConsole" IsReadOnly="True" VerticalScrollBarVisibility="Auto" FontFamily="Consolas" />
-            <Button Name="ClearConsoleButton" Content="Clear Console" Grid.Column="1" VerticalAlignment="Top" Margin="5,0,0,0" />
+            <RichTextBox Name="OutputConsole" Grid.Row="0" Grid.Column="0" IsReadOnly="True" VerticalScrollBarVisibility="Auto" FontFamily="Consolas" />
+            <Button Name="ClearConsoleButton" Content="Clear Console" Grid.Row="0" Grid.Column="1" VerticalAlignment="Top" Margin="5,0,0,0" />
+            <Border Grid.Row="1" Grid.ColumnSpan="2" Margin="0,8,0,0" Padding="8,6" Background="#F3F4F6" BorderBrush="#D1D5DB" BorderThickness="1">
+                <DockPanel>
+                    <TextBlock Name="BusyStateTextBlock" DockPanel.Dock="Right" Foreground="DarkBlue" FontWeight="Bold" Text="Idle" />
+                    <TextBlock Name="StatusTextBlock" Foreground="DimGray" Text="Ready." />
+                </DockPanel>
+            </Border>
         </Grid>
     </Grid>
 </Window>
@@ -112,7 +114,7 @@ $XAML_AddScriptDialog = @"
 #region Constants
 # UI Layout and styling constants
 $UIConstants = @{
-    WindowTitle          = "PowerShell Remote Admin Tool v4.3 (Best Practices)"
+    WindowTitle          = "PowerShell Remote Admin Tool"
     WindowHeight         = 800
     WindowWidth          = 1000
     LeftPanelWidth       = 350
@@ -133,6 +135,8 @@ $ColorConstants = @{
     Section        = "DarkBlue"
     UserAction     = "Orange"
 }
+
+$script:IsUiBusy = $false
 
 # Regular expression patterns
 $RegexPatterns = @{
@@ -164,9 +168,7 @@ function Add-OutputLine {
     .SYNOPSIS
         Adds a colored line of text to the main output console.
     .DESCRIPTION
-        This function safely handles UI updates from any thread by using the window's Dispatcher. 
-        It creates a new paragraph in the RichTextBox for each line. The function validates
-        the color parameter to prevent WPF color conversion errors.
+        Uses the UI dispatcher to append a colored line to the output console.
     .PARAMETER Text
         The string of text to add to the console. Required.
     .PARAMETER Color
@@ -183,7 +185,6 @@ function Add-OutputLine {
         [string]$Color = $ColorConstants.Info
     )
 
-    # Validate color by attempting conversion; fall back to black if invalid.
     $validColor = $Color
     try {
         [System.Windows.Media.ColorConverter]::ConvertFromString($validColor) | Out-Null
@@ -193,7 +194,6 @@ function Add-OutputLine {
         $validColor = $ColorConstants.Info
     }
 
-    # The Dispatcher ensures UI components are updated only on the main UI thread.
     $ui.Window.Dispatcher.Invoke([Action] {
         $paragraph = [System.Windows.Documents.Paragraph]::new()
         $run = [System.Windows.Documents.Run]::new($Text)
@@ -211,38 +211,28 @@ function Update-ScriptLibraryView {
     .SYNOPSIS
         Loads scripts from the scripts.xml file and populates the UI controls.
     .DESCRIPTION
-        Reads the scripts.xml file from the script's root directory. If the file doesn't exist,
-        it creates a new one. The function then populates the ListView in the "Script Library" tab
-        and the ComboBox in the main tab. Handles XML parsing errors gracefully.
-    .NOTES
-        This function accesses global $ui and $ScriptsXmlPath variables.
+        Loads scripts from `scripts.xml` and refreshes the bound UI controls.
     #>
     [CmdletBinding()]
     param()
 
     try {
-        # Create scripts.xml if it doesn't exist.
         if (-not (Test-Path -Path $ScriptsXmlPath)) {
             Add-OutputLine -Text "scripts.xml not found. Creating a new one." -Color $ColorConstants.Warning
             [System.IO.File]::WriteAllText($ScriptsXmlPath, $FileConstants.DefaultXmlContent)
         }
 
-        # Load XML with error handling for malformed files.
         [xml]$scriptsXml = Get-Content -Path $ScriptsXmlPath -ErrorAction Stop
 
-        # Validate that the root element exists.
         if ($null -eq $scriptsXml.DocumentElement) {
             throw "XML file is empty or malformed."
         }
 
-        # Clear existing items to prevent duplication on reload.
         $ui.ScriptLibraryListView.ItemsSource = $null
         $ui.ScriptSelectionComboBox.ItemsSource = $null
 
-        # Build array of script objects from XML nodes.
         $scriptObjects = @()
         foreach ($node in $scriptsXml.scripts.script) {
-            # Validate that both name and path are present.
             if ([string]::IsNullOrWhiteSpace($node.name) -or [string]::IsNullOrWhiteSpace($node.path)) {
                 Write-Verbose "Skipping script with missing name or path."
                 continue
@@ -254,20 +244,119 @@ function Update-ScriptLibraryView {
             }
         }
 
-        # Populate UI controls with scripts.
         $ui.ScriptLibraryListView.ItemsSource = $scriptObjects
         $ui.ScriptSelectionComboBox.ItemsSource = $scriptObjects
 
-        # Select the first item if scripts exist.
         if ($scriptObjects.Count -gt 0) {
             $ui.ScriptSelectionComboBox.SelectedIndex = 0
         }
 
         Update-ScriptDescriptionView
+        Update-ActionState
     }
     catch {
         Add-OutputLine -Text "Error loading script library: $($_.Exception.Message)" -Color $ColorConstants.Error
     }
+}
+
+function Set-StatusMessage {
+    <#
+    .SYNOPSIS
+        Updates the status message displayed in the footer.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Text,
+        [string]$Color = $ColorConstants.Subtle
+    )
+
+    $brush = [System.Windows.Media.Brushes]::DimGray
+    try {
+        $brush = [System.Windows.Media.SolidColorBrush]::new(
+            [System.Windows.Media.ColorConverter]::ConvertFromString($Color)
+        )
+    }
+    catch {
+        $brush = [System.Windows.Media.Brushes]::DimGray
+    }
+
+    $ui.StatusTextBlock.Text = $Text
+    $ui.StatusTextBlock.Foreground = $brush
+}
+
+function Set-ApplicationBusy {
+    <#
+    .SYNOPSIS
+        Toggles busy state for long-running operations.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [bool]$IsBusy,
+        [string]$Message = "Ready."
+    )
+
+    $script:IsUiBusy = $IsBusy
+    $ui.BusyStateTextBlock.Text = if ($IsBusy) { "Working..." } else { "Idle" }
+    [System.Windows.Input.Mouse]::OverrideCursor = if ($IsBusy) {
+        [System.Windows.Input.Cursors]::Wait
+    }
+    else {
+        $null
+    }
+
+    Set-StatusMessage -Text $Message -Color $(if ($IsBusy) { $ColorConstants.Highlight } else { $ColorConstants.Subtle })
+    Update-ActionState
+}
+
+function Get-NormalizedComputerList {
+    <#
+    .SYNOPSIS
+        Splits and de-duplicates computer names from free-form text input.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$Text = [string]::Empty
+    )
+
+    $seen = @{}
+    $computers = New-Object System.Collections.Generic.List[string]
+
+    foreach ($entry in ($Text -split '[,\r\n;]+')) {
+        $computerName = $entry.Trim()
+        if ([string]::IsNullOrWhiteSpace($computerName)) {
+            continue
+        }
+
+        if (-not $seen.ContainsKey($computerName)) {
+            $seen[$computerName] = $true
+            $computers.Add($computerName)
+        }
+    }
+
+    return @($computers)
+}
+
+function Update-ActionState {
+    <#
+    .SYNOPSIS
+        Keeps button enabled states in sync with the current UI selections.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $computerCount = @($ui.ComputerListView.ItemsSource).Count
+    $hasScript = $null -ne $ui.ScriptSelectionComboBox.SelectedItem
+    $hasLibrarySelection = $null -ne $ui.ScriptLibraryListView.SelectedItem
+
+    $ui.ImportFromFileButton.IsEnabled = -not $script:IsUiBusy
+    $ui.AddScriptButton.IsEnabled = -not $script:IsUiBusy
+    $ui.ClearConsoleButton.IsEnabled = -not $script:IsUiBusy
+    $ui.ScriptSelectionComboBox.IsEnabled = -not $script:IsUiBusy
+    $ui.GetInfoButton.IsEnabled = (-not $script:IsUiBusy) -and $computerCount -gt 0
+    $ui.RunScriptButton.IsEnabled = (-not $script:IsUiBusy) -and $computerCount -gt 0 -and $hasScript
+    $ui.RemoveScriptButton.IsEnabled = (-not $script:IsUiBusy) -and $hasLibrarySelection
 }
 
 function Resolve-ScriptLibraryPath {
@@ -616,25 +705,18 @@ function Update-ComputerListView {
         Parses comma-separated computer names from ComputerInputTextBox, trims each entry,
         validates against common naming patterns, and populates the ListView.
         The @() wrapper ensures a single computer name is treated as a list with one item.
-    .NOTES
-        This function accesses the global $ui variable.
     #>
     [CmdletBinding()]
     param()
 
     try {
-        # Split, trim, and filter empty entries.
-        $computers = @(
-            $ui.ComputerInputTextBox.Text.Split(',') |
-            ForEach-Object { $_.Trim() } |
-            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-        )
+        $computers = @(Get-NormalizedComputerList -Text $ui.ComputerInputTextBox.Text)
 
         # Validate computer names: must not contain invalid characters.
         # Valid: alphanumeric, hyphens, dots, underscores; 1-253 characters.
-        $invalidComputerNames = $computers | Where-Object {
+        $invalidComputerNames = @($computers | Where-Object {
             -not ($_ -match '^[a-zA-Z0-9._-]{1,253}$')
-        }
+        })
 
         if ($invalidComputerNames.Count -gt 0) {
             Write-Verbose "Invalid computer names found: $($invalidComputerNames -join ', ')"
@@ -642,6 +724,21 @@ function Update-ComputerListView {
 
         # Update UI with the list (invalid entries still shown for user awareness).
         $ui.ComputerListView.ItemsSource = $computers
+
+        if ($computers.Count -eq 0) {
+            $ui.ComputerSummaryTextBlock.Text = "No target computers loaded."
+            $ui.ComputerSummaryTextBlock.Foreground = [System.Windows.Media.Brushes]::DimGray
+        }
+        elseif ($invalidComputerNames.Count -gt 0) {
+            $ui.ComputerSummaryTextBlock.Text = "$($computers.Count) target(s) loaded, $($invalidComputerNames.Count) invalid name(s) still need attention."
+            $ui.ComputerSummaryTextBlock.Foreground = [System.Windows.Media.Brushes]::OrangeRed
+        }
+        else {
+            $ui.ComputerSummaryTextBlock.Text = "$($computers.Count) unique target computer(s) ready."
+            $ui.ComputerSummaryTextBlock.Foreground = [System.Windows.Media.Brushes]::DimGray
+        }
+
+        Update-ActionState
     }
     catch {
         Write-Verbose "Error updating computer list view: $($_.Exception.Message)"
@@ -656,8 +753,6 @@ function Update-ScriptDescriptionView {
         Acts as a mini-Markdown renderer for the FlowDocument viewer. Renders headers (#, ##, ###),
         bold text (**text**), and PowerShell code blocks (```powershell...```) with distinct styling.
         For .ps1 files, displays raw code in a code block style. Handles errors gracefully.
-    .NOTES
-        This function accesses the global $ui variable.
     #>
     [CmdletBinding()]
     param()
@@ -671,6 +766,9 @@ function Update-ScriptDescriptionView {
         $noScriptPara = [System.Windows.Documents.Paragraph]::new($noScriptRun)
         $doc.Blocks.Add($noScriptPara)
         $ui.ScriptDescriptionViewer.Document = $doc
+        $ui.ScriptSummaryTextBlock.Text = "No script selected."
+        $ui.ScriptSummaryTextBlock.Foreground = [System.Windows.Media.Brushes]::DimGray
+        Update-ActionState
         return
     }
 
@@ -693,6 +791,9 @@ function Update-ScriptDescriptionView {
             $codeParagraph.Inlines.Add([System.Windows.Documents.Run]::new($fileContent))
             $doc.Blocks.Add($codeParagraph)
             $ui.ScriptDescriptionViewer.Document = $doc
+            $ui.ScriptSummaryTextBlock.Text = "PowerShell script | $resolvedPath"
+            $ui.ScriptSummaryTextBlock.Foreground = [System.Windows.Media.Brushes]::DimGray
+            Update-ActionState
             return
         }
 
@@ -723,11 +824,15 @@ function Update-ScriptDescriptionView {
 
             # Process markdown after code block.
             Convert-MarkdownToFlowDocument -Content $afterCode -Document $doc
+            $ui.ScriptSummaryTextBlock.Text = "Markdown script | $($inputDefinitions.Count) input field(s) | $resolvedPath"
+            $ui.ScriptSummaryTextBlock.Foreground = [System.Windows.Media.Brushes]::DimGray
         }
         else {
             # No code block found; treat entire file as markdown.
             Convert-MarkdownToFlowDocument -Content $fileContent -Document $doc
             Add-ScriptInputSummaryToDocument -InputDefinitions $inputDefinitions -Document $doc
+            $ui.ScriptSummaryTextBlock.Text = "Markdown note | $($inputDefinitions.Count) input field(s) | $resolvedPath"
+            $ui.ScriptSummaryTextBlock.Foreground = [System.Windows.Media.Brushes]::OrangeRed
         }
     }
     catch {
@@ -735,9 +840,12 @@ function Update-ScriptDescriptionView {
         $errorRun.Foreground = [System.Windows.Media.Brushes]::Red
         $errorPara = [System.Windows.Documents.Paragraph]::new($errorRun)
         $doc.Blocks.Add($errorPara)
+        $ui.ScriptSummaryTextBlock.Text = "Unable to load selected script."
+        $ui.ScriptSummaryTextBlock.Foreground = [System.Windows.Media.Brushes]::Red
     }
 
     $ui.ScriptDescriptionViewer.Document = $doc
+    Update-ActionState
 }
 
 function Show-ScriptInputDialog {
@@ -1043,21 +1151,13 @@ function New-PSCredentialFromUI {
     .SYNOPSIS
         Creates a PSCredential object from UI username and password fields.
     .DESCRIPTION
-        Checks if both username and password fields are populated in the UI.
-        If both are present, creates and returns a PSCredential object.
-        If either is empty, returns $null to indicate default credentials should be used.
-        
-        The PasswordBox control already provides a SecureString, which is more secure
-        than ConvertTo-SecureString with -AsPlainText.
+        Creates a PSCredential from the optional UI fields when both values are present.
     .OUTPUTS
         [System.Management.Automation.PSCredential] or $null if credentials are not provided.
-    .NOTES
-        This function accesses the global $ui variable.
     #>
     [CmdletBinding()]
     param()
 
-    # Validate that both username and password are provided.
     if ([string]::IsNullOrWhiteSpace($ui.UsernameTextBox.Text)) {
         return $null
     }
@@ -1082,10 +1182,7 @@ function New-PSCredentialFromUI {
 
 #endregion
 
-# --- Main Script Execution ---
-
 #region Script Path Initialization
-# If $PSScriptRoot is not defined (e.g., when running in ISE), fall back to the current working directory.
 if ($PSScriptRoot) {
     $ScriptPath = $PSScriptRoot
 } else {
@@ -1096,32 +1193,26 @@ $ScriptsXmlPath = Join-Path $ScriptPath "scripts.xml"
 
 #region UI Initialization
 try {
-    # It is safer to cast to [xml] inside the try block.
     [xml]$xaml = $XAML_MainWindow
     [xml]$AddScriptDialogXAML = $XAML_AddScriptDialog
 
     $reader = [System.Xml.XmlNodeReader]::new($xaml)
     $window = [Windows.Markup.XamlReader]::Load($reader)
 
-    # Store all UI controls in a hashtable for clean access, avoiding global scope pollution.
     $ui = @{}
     $xaml.SelectNodes("//*[@Name]") | ForEach-Object {
         $ui[$_.Name] = $window.FindName($_.Name)
     }
 
-    # === CRITICAL FIX: Add the main window object itself to the UI hashtable. ===
     $ui['Window'] = $window
 }
 catch {
-    # If the UI fails to load, there's nothing else we can do.
-    Write-Error "CRITICAL: Failed to load the main window XAML. The application cannot start. Error: $($_.Exception.Message)"
+    Write-Error "Failed to load the main window XAML: $($_.Exception.Message)"
     return
 }
 #endregion
 
 #region Event Handlers
-# Note: Event handlers are kept concise. They call helper functions to perform complex logic.
-
 $ui.ImportFromFileButton.add_Click({
     $openFileDialog = New-Object Microsoft.Win32.OpenFileDialog
     $openFileDialog.Filter = $FileConstants.FileFilterImport
@@ -1165,6 +1256,10 @@ $ui.ScriptSelectionComboBox.add_SelectionChanged({
     Update-ScriptDescriptionView
 })
 
+$ui.ScriptLibraryListView.add_SelectionChanged({
+    Update-ActionState
+})
+
 $ui.GetInfoButton.add_Click({
     $computers = $ui.ComputerListView.ItemsSource
 
@@ -1174,57 +1269,67 @@ $ui.GetInfoButton.add_Click({
         return
     }
 
-    Add-OutputLine -Text "Starting 'Get Info' operation..." -Color $ColorConstants.Highlight
-    $window.Dispatcher.Invoke([Action] {}, "Background")
+    Set-ApplicationBusy -IsBusy $true -Message "Collecting system details from $($computers.Count) target(s)..."
 
-    # ScriptBlock to gather system information from remote computers.
-    $getInfoScriptBlock = {
-        try {
-            $osInfo = Get-WmiObject -ClassName Win32_OperatingSystem -ErrorAction Stop
-            $csInfo = Get-WmiObject -ClassName Win32_ComputerSystem -ErrorAction Stop
+    try {
+        Add-OutputLine -Text "Starting 'Get Info' operation..." -Color $ColorConstants.Highlight
+        $window.Dispatcher.Invoke([Action] {}, "Background")
 
-            # Calculate uptime from last boot time.
-            $bootTime = $osInfo.ConvertToDateTime($osInfo.LastBootUpTime)
-            $uptime = (Get-Date) - $bootTime
-            $uptimeString = "{0:N0} days, {1:D2}h:{2:D2}m:{3:D2}s" -f $uptime.Days, $uptime.Hours, $uptime.Minutes, $uptime.Seconds
+        # ScriptBlock to gather system information from remote computers.
+        $getInfoScriptBlock = {
+            try {
+                $osInfo = Get-WmiObject -ClassName Win32_OperatingSystem -ErrorAction Stop
+                $csInfo = Get-WmiObject -ClassName Win32_ComputerSystem -ErrorAction Stop
 
-            return [PSCustomObject]@{
-                OS     = $osInfo.Caption
-                Model  = $csInfo.Model
-                Uptime = $uptimeString
+                # Calculate uptime from last boot time.
+                $bootTime = $osInfo.ConvertToDateTime($osInfo.LastBootUpTime)
+                $uptime = (Get-Date) - $bootTime
+                $uptimeString = "{0:N0} days, {1:D2}h:{2:D2}m:{3:D2}s" -f $uptime.Days, $uptime.Hours, $uptime.Minutes, $uptime.Seconds
+
+                return [PSCustomObject]@{
+                    OS     = $osInfo.Caption
+                    Model  = $csInfo.Model
+                    Uptime = $uptimeString
+                }
+            }
+            catch {
+                throw "Failed to retrieve system info: $_"
             }
         }
-        catch {
-            throw "Failed to retrieve system info: $_"
-        }
-    }
 
-    $credential = New-PSCredentialFromUI
+        $credential = New-PSCredentialFromUI
 
-    # Build parameters for Invoke-Command.
-    $invokeParams = @{
-        ScriptBlock = $getInfoScriptBlock
-        ErrorAction = 'Stop'
-    }
-    if ($credential) {
-        $invokeParams.Add("Credential", $credential)
-    }
+        # Build parameters for Invoke-Command.
+        $invokeParams = @{
+            ScriptBlock = $getInfoScriptBlock
+            ErrorAction = 'Stop'
+        }
+        if ($credential) {
+            $invokeParams.Add("Credential", $credential)
+        }
 
-    # Query each target computer.
-    foreach ($computer in $computers) {
-        Add-OutputLine -Text "--- Querying $computer ---" -Color $ColorConstants.Section
-        try {
-            $invokeParams["ComputerName"] = $computer
-            $result = Invoke-Command @invokeParams
-            Add-OutputLine -Text "  OS:     $($result.OS)"
-            Add-OutputLine -Text "  Model:  $($result.Model)"
-            Add-OutputLine -Text "  Uptime: $($result.Uptime)"
+        # Query each target computer.
+        foreach ($computer in $computers) {
+            Set-StatusMessage -Text "Querying $computer..." -Color $ColorConstants.Highlight
+            Add-OutputLine -Text "--- Querying $computer ---" -Color $ColorConstants.Section
+            try {
+                $invokeParams["ComputerName"] = $computer
+                $result = Invoke-Command @invokeParams
+                Add-OutputLine -Text "  OS:     $($result.OS)"
+                Add-OutputLine -Text "  Model:  $($result.Model)"
+                Add-OutputLine -Text "  Uptime: $($result.Uptime)"
+            }
+            catch {
+                Add-OutputLine -Text "  ERROR: $($_.Exception.Message)" -Color $ColorConstants.Error
+            }
         }
-        catch {
-            Add-OutputLine -Text "  ERROR: $($_.Exception.Message)" -Color $ColorConstants.Error
-        }
+
+        Add-OutputLine -Text "--- 'Get Info' operation complete. ---" -Color $ColorConstants.Highlight
+        Set-StatusMessage -Text "Get Info finished for $($computers.Count) target(s)." -Color $ColorConstants.Success
     }
-    Add-OutputLine -Text "--- 'Get Info' operation complete. ---" -Color $ColorConstants.Highlight
+    finally {
+        Set-ApplicationBusy -IsBusy $false
+    }
 })
 
 $ui.RunScriptButton.add_Click({
@@ -1241,9 +1346,6 @@ $ui.RunScriptButton.add_Click({
         return
     }
 
-    Add-OutputLine -Text "Starting script '$($selectedScript.Name)'..." -Color $ColorConstants.Highlight
-    $window.Dispatcher.Invoke([Action] {}, "Background")
-
     try {
         $inputDefinitions = @(Get-ScriptInputDefinitions -FilePath $selectedScript.Path)
     }
@@ -1255,71 +1357,85 @@ $ui.RunScriptButton.add_Click({
     $scriptInputValues = Show-ScriptInputDialog -InputDefinitions $inputDefinitions -ScriptName $selectedScript.Name
     if ($null -eq $scriptInputValues) {
         Add-OutputLine -Text "Script execution canceled." -Color $ColorConstants.Warning
+        Set-StatusMessage -Text "Script execution canceled." -Color $ColorConstants.Warning
         return
     }
 
-    # Extract script code from file.
+    Set-ApplicationBusy -IsBusy $true -Message "Running '$($selectedScript.Name)' on $($computers.Count) target(s)..."
+
     try {
-        $scriptCode = Get-ScriptCodeFromFile -FilePath $selectedScript.Path
-    }
-    catch {
-        Add-OutputLine -Text "Fatal error reading script file: $($_.Exception.Message)" -Color $ColorConstants.Error
-        return
-    }
+        Add-OutputLine -Text "Starting script '$($selectedScript.Name)'..." -Color $ColorConstants.Highlight
+        $window.Dispatcher.Invoke([Action] {}, "Background")
 
-    # Create scriptblock and prepare invocation parameters.
-    try {
-        $scriptBlockToRun = [scriptblock]::Create($scriptCode)
-    }
-    catch {
-        Add-OutputLine -Text "Fatal error parsing script code: $($_.Exception.Message)" -Color $ColorConstants.Error
-        return
-    }
-
-    $credential = New-PSCredentialFromUI
-
-    $invokeParams = @{
-        ScriptBlock = $scriptBlockToRun
-        ErrorAction = 'Stop'
-    }
-    if ($credential) {
-        $invokeParams.Add("Credential", $credential)
-    }
-
-    # Execute script on each target computer.
-    foreach ($computer in $computers) {
-        Add-OutputLine -Text "--- Executing on $computer ---" -Color $ColorConstants.Section
+        # Extract script code from file.
         try {
-            $invokeParams["ComputerName"] = $computer
-            if ($inputDefinitions.Count -gt 0) {
-                $invokeParams["ArgumentList"] = @(
-                    foreach ($definition in $inputDefinitions) {
-                        $scriptInputValues[$definition.Name]
-                    }
-                )
-            }
-            elseif ($invokeParams.ContainsKey("ArgumentList")) {
-                $invokeParams.Remove("ArgumentList")
-            }
-
-            $output = Invoke-Command @invokeParams
-
-            if ($output) {
-                # Format and display output line by line.
-                $outputLines = $output | Out-String
-                $outputLines.Split("`n") |
-                Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-                ForEach-Object { Add-OutputLine -Text $_.Trim() }
-            }
-            else {
-                Add-OutputLine -Text "(Script executed successfully with no output)" -Color $ColorConstants.Subtle
-            }
+            $scriptCode = Get-ScriptCodeFromFile -FilePath $selectedScript.Path
         }
         catch {
-            Add-OutputLine -Text "Remote execution error: $($_.Exception.Message)" -Color $ColorConstants.Error
+            Add-OutputLine -Text "Fatal error reading script file: $($_.Exception.Message)" -Color $ColorConstants.Error
+            return
         }
+
+        # Create scriptblock and prepare invocation parameters.
+        try {
+            $scriptBlockToRun = [scriptblock]::Create($scriptCode)
+        }
+        catch {
+            Add-OutputLine -Text "Fatal error parsing script code: $($_.Exception.Message)" -Color $ColorConstants.Error
+            return
+        }
+
+        $credential = New-PSCredentialFromUI
+
+        $invokeParams = @{
+            ScriptBlock = $scriptBlockToRun
+            ErrorAction = 'Stop'
+        }
+        if ($credential) {
+            $invokeParams.Add("Credential", $credential)
+        }
+
+        # Execute script on each target computer.
+        foreach ($computer in $computers) {
+            Set-StatusMessage -Text "Running '$($selectedScript.Name)' on $computer..." -Color $ColorConstants.Highlight
+            Add-OutputLine -Text "--- Executing on $computer ---" -Color $ColorConstants.Section
+            try {
+                $invokeParams["ComputerName"] = $computer
+                if ($inputDefinitions.Count -gt 0) {
+                    $invokeParams["ArgumentList"] = @(
+                        foreach ($definition in $inputDefinitions) {
+                            $scriptInputValues[$definition.Name]
+                        }
+                    )
+                }
+                elseif ($invokeParams.ContainsKey("ArgumentList")) {
+                    $invokeParams.Remove("ArgumentList")
+                }
+
+                $output = Invoke-Command @invokeParams
+
+                if ($output) {
+                    # Format and display output line by line.
+                    $outputLines = $output | Out-String
+                    $outputLines.Split("`n") |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                    ForEach-Object { Add-OutputLine -Text $_.Trim() }
+                }
+                else {
+                    Add-OutputLine -Text "(Script executed successfully with no output)" -Color $ColorConstants.Subtle
+                }
+            }
+            catch {
+                Add-OutputLine -Text "Remote execution error: $($_.Exception.Message)" -Color $ColorConstants.Error
+            }
+        }
+
+        Add-OutputLine -Text "--- Script execution complete. ---" -Color $ColorConstants.Highlight
+        Set-StatusMessage -Text "'$($selectedScript.Name)' finished for $($computers.Count) target(s)." -Color $ColorConstants.Success
     }
-    Add-OutputLine -Text "--- Script execution complete. ---" -Color $ColorConstants.Highlight
+    finally {
+        Set-ApplicationBusy -IsBusy $false
+    }
 })
 
 $ui.AddScriptButton.add_Click({
@@ -1408,6 +1524,7 @@ $ui.AddScriptButton.add_Click({
 
             $scriptsXml.Save($ScriptsXmlPath)
             Add-OutputLine -Text "Added script '$newScriptName' to library." -Color $ColorConstants.Success
+            Set-StatusMessage -Text "Added script '$newScriptName' to the library." -Color $ColorConstants.Success
             Update-ScriptLibraryView
         }
         catch {
@@ -1443,6 +1560,7 @@ $ui.RemoveScriptButton.add_Click({
         $scriptsXml.Save($ScriptsXmlPath)
 
         Add-OutputLine -Text "Removed script '$($selectedItem.Name)' from library." -Color $ColorConstants.Success
+        Set-StatusMessage -Text "Removed script '$($selectedItem.Name)' from the library." -Color $ColorConstants.Success
         Update-ScriptLibraryView
     }
     catch {
@@ -1477,6 +1595,8 @@ try {
     Update-ComputerListView
 
     Add-OutputLine -Text "Admin Tool initialized successfully. Local hostname: $localHostname" -Color $ColorConstants.Success
+    Set-StatusMessage -Text "Ready. Loaded admin tool for $localHostname." -Color $ColorConstants.Success
+    Update-ActionState
 }
 catch {
     Add-OutputLine -Text "Critical error during initialization: $($_.Exception.Message)" -Color $ColorConstants.Error
