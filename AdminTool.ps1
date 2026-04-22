@@ -12,84 +12,305 @@ Add-Type -AssemblyName PresentationFramework
 $XAML_MainWindow = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="PowerShell Remote Admin Tool" Height="800" Width="1000" WindowStartupLocation="CenterScreen">
-    <Grid Margin="10">
+        Title="PowerShell Remote Admin Tool" Height="900" Width="1320" MinHeight="780" MinWidth="1120"
+        WindowStartupLocation="CenterScreen" Background="#F3F0E8">
+    <Window.Resources>
+        <SolidColorBrush x:Key="WindowBgBrush" Color="#F3F0E8" />
+        <SolidColorBrush x:Key="CardBrush" Color="#FFFDF8" />
+        <SolidColorBrush x:Key="CardBorderBrush" Color="#D9D1C5" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#1677D1" />
+        <SolidColorBrush x:Key="AccentSoftBrush" Color="#DCEBFA" />
+        <SolidColorBrush x:Key="MutedBrush" Color="#6B7280" />
+        <SolidColorBrush x:Key="ConsoleBgBrush" Color="#171A1F" />
+        <SolidColorBrush x:Key="ConsolePanelBrush" Color="#111418" />
+        <Style TargetType="TextBox">
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="Padding" Value="14,12" />
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="Background" Value="White" />
+            <Setter Property="BorderBrush" Value="#D2D6DC" />
+            <Setter Property="BorderThickness" Value="1.5" />
+            <Setter Property="Foreground" Value="#1F2937" />
+        </Style>
+        <Style TargetType="PasswordBox">
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="Padding" Value="14,12" />
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="Background" Value="White" />
+            <Setter Property="BorderBrush" Value="#D2D6DC" />
+            <Setter Property="BorderThickness" Value="1.5" />
+            <Setter Property="Foreground" Value="#1F2937" />
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="Padding" Value="12,10" />
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="Background" Value="White" />
+            <Setter Property="BorderBrush" Value="#D2D6DC" />
+            <Setter Property="BorderThickness" Value="1.5" />
+            <Setter Property="Foreground" Value="#111827" />
+        </Style>
+        <Style x:Key="PrimaryButtonStyle" TargetType="Button">
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="16,12" />
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="16">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="SecondaryButtonStyle" TargetType="Button" BasedOn="{StaticResource PrimaryButtonStyle}">
+            <Setter Property="Foreground" Value="#1F2937" />
+            <Setter Property="Background" Value="#F7F3EB" />
+            <Setter Property="BorderBrush" Value="#D5D0C7" />
+            <Setter Property="BorderThickness" Value="1.5" />
+        </Style>
+        <Style x:Key="GhostButtonStyle" TargetType="Button" BasedOn="{StaticResource PrimaryButtonStyle}">
+            <Setter Property="Foreground" Value="#4B5563" />
+            <Setter Property="Background" Value="#F7F3EB" />
+            <Setter Property="BorderBrush" Value="#D5D0C7" />
+            <Setter Property="BorderThickness" Value="1.5" />
+        </Style>
+        <Style x:Key="ConsoleButtonStyle" TargetType="Button" BasedOn="{StaticResource PrimaryButtonStyle}">
+            <Setter Property="Foreground" Value="#E5E7EB" />
+            <Setter Property="Background" Value="#1C222A" />
+            <Setter Property="BorderBrush" Value="#2A323D" />
+            <Setter Property="BorderThickness" Value="1.5" />
+            <Setter Property="Padding" Value="14,10" />
+        </Style>
+        <Style TargetType="TabControl">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
+        <Style TargetType="TabItem">
+            <Setter Property="FontSize" Value="18" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="#4B5563" />
+            <Setter Property="Padding" Value="22,16" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border Name="TabBorder" Background="Transparent" BorderBrush="Transparent" BorderThickness="0,0,0,3" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" ContentSource="Header" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="TabBorder" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="SectionHeadingStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="18" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Foreground" Value="#3F3F46" />
+            <Setter Property="Margin" Value="0,0,0,14" />
+        </Style>
+    </Window.Resources>
+    <Border Margin="10" Background="{StaticResource WindowBgBrush}" BorderBrush="#CFC4B5" BorderThickness="1" CornerRadius="28" SnapsToDevicePixels="True">
+    <Grid>
         <Grid.RowDefinitions>
+            <RowDefinition Height="88" />
             <RowDefinition Height="*" />
-            <RowDefinition Height="5" />
-            <RowDefinition Height="250" MinHeight="100" />
+            <RowDefinition Height="10" />
+            <RowDefinition Height="320" MinHeight="180" />
         </Grid.RowDefinitions>
-        <TabControl Grid.Row="0" Name="MainTabControl">
-            <TabItem Header="Remote Computer Info">
-                <Grid>
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="350" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                    <StackPanel Grid.Column="0" Margin="10">
-                        <Label Content="Target Computers" FontWeight="Bold" />
-                        <TextBox Name="ComputerInputTextBox" ToolTip="Enter computer names, comma-separated." />
-                        <Button Name="ImportFromFileButton" Content="Import from File..." Margin="0,5,0,0" />
-                        <ListView Name="ComputerListView" Height="125" SelectionMode="Multiple" ScrollViewer.HorizontalScrollBarVisibility="Disabled" Margin="0,5,0,0">
-                            <ListView.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ListView.ItemsPanel>
-                            <ListView.ItemTemplate><DataTemplate>
-                                <Border BorderBrush="CornflowerBlue" Background="AliceBlue" BorderThickness="1" CornerRadius="3" Margin="3" Padding="6,3"><TextBlock Text="{Binding}" /></Border>
-                            </DataTemplate></ListView.ItemTemplate>
-                        </ListView>
-                        <TextBlock Name="ComputerSummaryTextBlock" Margin="0,6,0,0" Foreground="DimGray" Text="No target computers loaded." />
-                        <Separator Margin="0,15,0,5" />
-                        <Label Content="Alternate Credentials (Optional)" FontWeight="Bold" />
-                        <Grid>
-                             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                             <Grid.RowDefinitions><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
-                             <Label Grid.Row="0" Grid.Column="0" Content="Username:" VerticalAlignment="Center"/>
-                             <TextBox Grid.Row="0" Grid.Column="1" Name="UsernameTextBox" Margin="5" VerticalAlignment="Center"/>
-                             <Label Grid.Row="1" Grid.Column="0" Content="Password:" VerticalAlignment="Center"/>
-                             <PasswordBox Grid.Row="1" Grid.Column="1" Name="PasswordInputBox" Margin="5" VerticalAlignment="Center"/>
-                        </Grid>
-                        <Separator Margin="0,15,0,5" />
-                        <Label Content="Select &amp; Run Action" FontWeight="Bold" />
-                        <ComboBox Name="ScriptSelectionComboBox" DisplayMemberPath="Name" Margin="0,5,0,0" />
-                        <TextBlock Name="ScriptSummaryTextBlock" Margin="0,6,0,0" Foreground="DimGray" TextWrapping="Wrap" Text="No script selected." />
-                        <Button Name="GetInfoButton" Content="Get Info" FontWeight="Bold" Margin="0,10,0,0" />
-                        <Button Name="RunScriptButton" Content="Run Selected Script" FontWeight="Bold" Margin="0,10,0,0" />
+        <Border Grid.Row="0" Background="#FBFAF6" BorderBrush="#D8D1C5" BorderThickness="0,0,0,1" CornerRadius="28,28,0,0">
+            <Grid Margin="22,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Width="44" Height="44" Background="{StaticResource AccentBrush}" CornerRadius="12">
+                        <TextBlock Text="PS" Foreground="White" FontSize="18" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <StackPanel Margin="14,0,0,0" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="PowerShell Admin Tool" FontSize="24" FontWeight="SemiBold" Foreground="#222222" />
+                            <TextBlock Text="v4.3" FontSize="18" Foreground="#7A7A7A" Margin="18,2,0,0" />
+                        </StackPanel>
+                        <TextBlock Text="Remote response and script triage workspace" FontSize="13" Foreground="#7C838F" Margin="0,4,0,0" />
                     </StackPanel>
-                    <Border Grid.Column="1" Margin="10" BorderBrush="LightGray" BorderThickness="1">
-                        <Grid>
-                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*" /></Grid.RowDefinitions>
-                            <Label Grid.Row="0" FontWeight="Bold" Background="LightGray" Padding="5" Content="Script Preview"/>
-                            <FlowDocumentScrollViewer Grid.Row="1" Name="ScriptDescriptionViewer" Padding="5"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Ellipse Width="24" Height="24" Fill="#F6A11A" Margin="0,0,10,0" />
+                    <Ellipse Width="24" Height="24" Fill="#77A627" Margin="0,0,10,0" />
+                    <Ellipse Width="24" Height="24" Fill="#E84D48" />
+                </StackPanel>
+            </Grid>
+        </Border>
+        <Grid Grid.Row="1" Margin="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="470" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Border Grid.Column="0" Background="#FAF8F3" BorderBrush="#D8D1C5" BorderThickness="0,0,1,0">
+                <TabControl Name="MainTabControl">
+                    <TabItem Header="Remote target">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel Margin="26">
+                                <TextBlock Text="TARGET COMPUTERS" Style="{StaticResource SectionHeadingStyle}" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="110" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox Name="ComputerInputTextBox" ToolTip="Enter computer names separated by commas, semicolons, or new lines." Height="56" />
+                                    <Button Name="AddComputerButton" Grid.Column="1" Content="Add" Style="{StaticResource SecondaryButtonStyle}" Height="56" Margin="12,0,0,0" />
+                                </Grid>
+                                <Border Background="#F8F5EE" BorderBrush="#D8D1C5" BorderThickness="1.5" CornerRadius="18" Padding="12" Margin="0,14,0,0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="*" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <ListView Name="ComputerListView" Height="160" SelectionMode="Multiple" BorderThickness="0" Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                            <ListView.ItemContainerStyle>
+                                                <Style TargetType="ListViewItem">
+                                                    <Setter Property="Padding" Value="0" />
+                                                    <Setter Property="Margin" Value="0,0,0,10" />
+                                                    <Setter Property="BorderThickness" Value="0" />
+                                                    <Setter Property="Background" Value="Transparent" />
+                                                </Style>
+                                            </ListView.ItemContainerStyle>
+                                            <ListView.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Background="White" BorderBrush="#D7DCE3" BorderThickness="1.5" CornerRadius="16" Padding="16,12">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <Ellipse Width="12" Height="12" Fill="#6B9D2D" Margin="0,4,12,0" />
+                                                            <TextBlock Text="{Binding}" FontFamily="Consolas" FontSize="15" Foreground="#1F2937" />
+                                                        </StackPanel>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ListView.ItemTemplate>
+                                        </ListView>
+                                        <TextBlock Name="ComputerSummaryTextBlock" Grid.Row="1" Margin="4,6,4,0" Foreground="#6B7280" Text="No target computers loaded." TextWrapping="Wrap" />
+                                    </Grid>
+                                </Border>
+                                <Button Name="ImportFromFileButton" Content="+ Import from file (.txt / .csv)" Style="{StaticResource GhostButtonStyle}" Margin="0,16,0,0" />
+
+                                <TextBlock Text="ALTERNATE CREDENTIALS" Style="{StaticResource SectionHeadingStyle}" Margin="0,34,0,14" />
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="140" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Username" VerticalAlignment="Center" FontSize="18" Foreground="#424242" Margin="0,0,14,0" />
+                                    <TextBox Grid.Column="1" Name="UsernameTextBox" Height="54" />
+                                    <TextBlock Grid.Row="1" Text="Password" VerticalAlignment="Center" FontSize="18" Foreground="#424242" Margin="0,18,14,0" />
+                                    <PasswordBox Grid.Row="1" Grid.Column="1" Name="PasswordInputBox" Height="54" Margin="0,18,0,0" />
+                                </Grid>
+
+                                <TextBlock Text="SELECT SCRIPT" Style="{StaticResource SectionHeadingStyle}" Margin="0,34,0,14" />
+                                <ComboBox Name="ScriptSelectionComboBox" DisplayMemberPath="Name" Height="58" />
+                                <TextBlock Name="ScriptSummaryTextBlock" Margin="2,12,2,0" Foreground="#6B7280" TextWrapping="Wrap" Text="No script selected." />
+                                <Button Name="GetInfoButton" Content="Get info" Style="{StaticResource SecondaryButtonStyle}" Margin="0,22,0,0" />
+                                <Button Name="RunScriptButton" Content="Run selected script" Style="{StaticResource PrimaryButtonStyle}" Margin="0,12,0,0" />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
+                    <TabItem Header="Script library">
+                        <Grid Margin="24">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="SCRIPT LIBRARY" Style="{StaticResource SectionHeadingStyle}" />
+                            <Border Grid.Row="1" Background="White" BorderBrush="#D8D1C5" BorderThickness="1.5" CornerRadius="18" Padding="10">
+                                <ListView Name="ScriptLibraryListView" BorderThickness="0" Background="Transparent">
+                                    <ListView.View>
+                                        <GridView>
+                                            <GridViewColumn Header="Script Name" Width="180" DisplayMemberBinding="{Binding Name}" />
+                                            <GridViewColumn Header="File Path" Width="210" DisplayMemberBinding="{Binding Path}" />
+                                        </GridView>
+                                    </ListView.View>
+                                </ListView>
+                            </Border>
+                            <Grid Grid.Row="2" Margin="0,16,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Button Name="AddScriptButton" Grid.Column="0" Content="Add new script..." Style="{StaticResource SecondaryButtonStyle}" />
+                                <Button Name="RemoveScriptButton" Grid.Column="1" Content="Remove selected" Style="{StaticResource GhostButtonStyle}" Margin="12,0,0,0" />
+                            </Grid>
+                        </Grid>
+                    </TabItem>
+                </TabControl>
+            </Border>
+            <Border Grid.Column="1" Background="#FFFDF9">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="84" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Border Grid.Row="0" BorderBrush="#D8D1C5" BorderThickness="0,0,0,1" Background="#FBFAF6">
+                        <Grid Margin="28,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="SCRIPT PREVIEW" VerticalAlignment="Center" FontSize="20" Foreground="#3F3F46" />
+                            <Border Name="PreviewBadgeBorder" Grid.Column="1" Background="#DCEBFA" CornerRadius="18" Padding="16,8" VerticalAlignment="Center">
+                                <TextBlock Name="PreviewBadgeTextBlock" Foreground="#0B5CAD" FontSize="14" FontWeight="SemiBold" Text="No script selected" />
+                            </Border>
                         </Grid>
                     </Border>
+                    <FlowDocumentScrollViewer Grid.Row="1" Name="ScriptDescriptionViewer" Padding="28,26,28,16" IsToolBarVisible="False" VerticalScrollBarVisibility="Auto" />
                 </Grid>
-            </TabItem>
-            <TabItem Header="Script Library">
-                <Grid Margin="10">
-                    <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                    <ListView Name="ScriptLibraryListView" Grid.Row="0">
-                        <ListView.View><GridView>
-                            <GridViewColumn Header="Script Name" Width="300" DisplayMemberBinding="{Binding Name}" />
-                            <GridViewColumn Header="File Path" Width="450" DisplayMemberBinding="{Binding Path}" />
-                        </GridView></ListView.View>
-                    </ListView>
-                    <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
-                        <Button Name="AddScriptButton" Content="Add New Script..." Width="120" Margin="5" />
-                        <Button Name="RemoveScriptButton" Content="Remove Selected" Width="120" Margin="5" />
-                    </StackPanel>
-                </Grid>
-            </TabItem>
-        </TabControl>
-        <GridSplitter Grid.Row="1" Height="5" HorizontalAlignment="Stretch" Background="LightGray" />
-        <Grid Grid.Row="2">
-            <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-            <RichTextBox Name="OutputConsole" Grid.Row="0" Grid.Column="0" IsReadOnly="True" VerticalScrollBarVisibility="Auto" FontFamily="Consolas" />
-            <Button Name="ClearConsoleButton" Content="Clear Console" Grid.Row="0" Grid.Column="1" VerticalAlignment="Top" Margin="5,0,0,0" />
-            <Border Grid.Row="1" Grid.ColumnSpan="2" Margin="0,8,0,0" Padding="8,6" Background="#F3F4F6" BorderBrush="#D1D5DB" BorderThickness="1">
-                <DockPanel>
-                    <TextBlock Name="BusyStateTextBlock" DockPanel.Dock="Right" Foreground="DarkBlue" FontWeight="Bold" Text="Idle" />
-                    <TextBlock Name="StatusTextBlock" Foreground="DimGray" Text="Ready." />
-                </DockPanel>
             </Border>
         </Grid>
+        <GridSplitter Grid.Row="2" Height="10" HorizontalAlignment="Stretch" Background="Transparent" />
+        <Border Grid.Row="3" Background="{StaticResource ConsolePanelBrush}" CornerRadius="0,0,28,28">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="94" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Border Grid.Row="0" Background="{StaticResource ConsolePanelBrush}" BorderBrush="#2A2F37" BorderThickness="0,0,0,1">
+                    <Grid Margin="28,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="OUTPUT CONSOLE" VerticalAlignment="Center" FontSize="18" Foreground="#8B9098" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button Name="ClearConsoleButton" Content="Clear" Style="{StaticResource ConsoleButtonStyle}" />
+                            <Button Name="CopyConsoleButton" Content="Copy all" Style="{StaticResource ConsoleButtonStyle}" Margin="12,0,0,0" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+                <RichTextBox Name="OutputConsole" Grid.Row="1" Margin="22,18,22,16" IsReadOnly="True" VerticalScrollBarVisibility="Auto" FontFamily="Consolas" Background="{StaticResource ConsoleBgBrush}" BorderThickness="0" Foreground="#E5E7EB" />
+                <Border Grid.Row="2" Margin="22,0,22,18" Padding="10,10" Background="#1C222A" BorderBrush="#2A323D" BorderThickness="1" CornerRadius="14">
+                    <DockPanel>
+                        <TextBlock Name="BusyStateTextBlock" DockPanel.Dock="Right" Foreground="#9AD1FF" FontWeight="Bold" Text="Idle" />
+                        <TextBlock Name="StatusTextBlock" Foreground="#AAB2BE" Text="Ready." TextWrapping="Wrap" />
+                    </DockPanel>
+                </Border>
+            </Grid>
+        </Grid>
     </Grid>
+    </Border>
 </Window>
 "@
 
@@ -115,25 +336,25 @@ $XAML_AddScriptDialog = @"
 # UI Layout and styling constants
 $UIConstants = @{
     WindowTitle          = "PowerShell Remote Admin Tool"
-    WindowHeight         = 800
-    WindowWidth          = 1000
-    LeftPanelWidth       = 350
-    ComputerListHeight   = 125
-    OutputConsoleHeight  = 250
-    OutputConsoleMinHeight = 100
+    WindowHeight         = 900
+    WindowWidth          = 1320
+    LeftPanelWidth       = 470
+    ComputerListHeight   = 160
+    OutputConsoleHeight  = 320
+    OutputConsoleMinHeight = 180
     ConsoleFont          = "Consolas"
 }
 
 # Color constants for output messages
 $ColorConstants = @{
-    Success        = "Green"
-    Error          = "Red"
-    Warning        = "OrangeRed"
-    Info           = "Black"
-    Highlight      = "Blue"
-    Subtle         = "Gray"
-    Section        = "DarkBlue"
-    UserAction     = "Orange"
+    Success        = "#5EEAD4"
+    Error          = "#F87171"
+    Warning        = "#FBBF24"
+    Info           = "#E5E7EB"
+    Highlight      = "#7DD3FC"
+    Subtle         = "#9CA3AF"
+    Section        = "#93C5FD"
+    UserAction     = "#FDBA74"
 }
 
 $script:IsUiBusy = $false
@@ -196,6 +417,7 @@ function Add-OutputLine {
 
     $ui.Window.Dispatcher.Invoke([Action] {
         $paragraph = [System.Windows.Documents.Paragraph]::new()
+        $paragraph.Margin = "0,0,0,4"
         $run = [System.Windows.Documents.Run]::new($Text)
         $run.Foreground = [System.Windows.Media.SolidColorBrush]::new(
             [System.Windows.Media.ColorConverter]::ConvertFromString($validColor)
@@ -203,6 +425,7 @@ function Add-OutputLine {
         $paragraph.Inlines.Add($run)
         $ui.OutputConsole.Document.Blocks.Add($paragraph)
         $ui.OutputConsole.ScrollToEnd()
+        Update-ActionState
     })
 }
 
@@ -285,6 +508,39 @@ function Set-StatusMessage {
     $ui.StatusTextBlock.Foreground = $brush
 }
 
+function Set-PreviewBadge {
+    <#
+    .SYNOPSIS
+        Updates the preview badge shown in the preview pane header.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$Text = "No script selected",
+        [string]$Background = "#E8EEF5",
+        [string]$Foreground = "#0B5CAD"
+    )
+
+    $backgroundBrush = [System.Windows.Media.Brushes]::LightGray
+    $foregroundBrush = [System.Windows.Media.Brushes]::DarkBlue
+
+    try {
+        $backgroundBrush = [System.Windows.Media.SolidColorBrush]::new(
+            [System.Windows.Media.ColorConverter]::ConvertFromString($Background)
+        )
+        $foregroundBrush = [System.Windows.Media.SolidColorBrush]::new(
+            [System.Windows.Media.ColorConverter]::ConvertFromString($Foreground)
+        )
+    }
+    catch {
+        $backgroundBrush = [System.Windows.Media.Brushes]::LightGray
+        $foregroundBrush = [System.Windows.Media.Brushes]::DarkBlue
+    }
+
+    $ui.PreviewBadgeTextBlock.Text = $Text
+    $ui.PreviewBadgeBorder.Background = $backgroundBrush
+    $ui.PreviewBadgeTextBlock.Foreground = $foregroundBrush
+}
+
 function Set-ApplicationBusy {
     <#
     .SYNOPSIS
@@ -357,6 +613,36 @@ function Update-ActionState {
     $ui.GetInfoButton.IsEnabled = (-not $script:IsUiBusy) -and $computerCount -gt 0
     $ui.RunScriptButton.IsEnabled = (-not $script:IsUiBusy) -and $computerCount -gt 0 -and $hasScript
     $ui.RemoveScriptButton.IsEnabled = (-not $script:IsUiBusy) -and $hasLibrarySelection
+    $ui.AddComputerButton.IsEnabled = -not $script:IsUiBusy
+    $ui.CopyConsoleButton.IsEnabled = $ui.OutputConsole.Document.Blocks.Count -gt 0
+}
+
+function New-CodePreviewParagraph {
+    <#
+    .SYNOPSIS
+        Creates a styled paragraph for code preview blocks.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Content
+    )
+
+    $paragraph = [System.Windows.Documents.Paragraph]::new()
+    $paragraph.FontFamily = $UIConstants.ConsoleFont
+    $paragraph.FontSize = 15
+    $paragraph.Background = [System.Windows.Media.SolidColorBrush]::new(
+        [System.Windows.Media.ColorConverter]::ConvertFromString("#1F2329")
+    )
+    $paragraph.Foreground = [System.Windows.Media.SolidColorBrush]::new(
+        [System.Windows.Media.ColorConverter]::ConvertFromString("#E5E7EB")
+    )
+    $paragraph.Padding = "18"
+    $paragraph.Margin = "0,18,0,18"
+    $paragraph.LineHeight = 24
+    $paragraph.Inlines.Add([System.Windows.Documents.Run]::new($Content))
+
+    return $paragraph
 }
 
 function Resolve-ScriptLibraryPath {
@@ -759,15 +1045,23 @@ function Update-ScriptDescriptionView {
 
     $selectedScript = $ui.ScriptSelectionComboBox.SelectedItem
     $doc = [System.Windows.Documents.FlowDocument]::new()
+    $doc.PagePadding = "0"
+    $doc.FontFamily = "Segoe UI"
+    $doc.FontSize = 18
+    $doc.Foreground = [System.Windows.Media.SolidColorBrush]::new(
+        [System.Windows.Media.ColorConverter]::ConvertFromString("#2A2A2A")
+    )
 
     # Handle no script selected.
     if ($null -eq $selectedScript) {
         $noScriptRun = [System.Windows.Documents.Run]::new("No script selected.")
         $noScriptPara = [System.Windows.Documents.Paragraph]::new($noScriptRun)
+        $noScriptPara.Foreground = [System.Windows.Media.Brushes]::DimGray
         $doc.Blocks.Add($noScriptPara)
         $ui.ScriptDescriptionViewer.Document = $doc
         $ui.ScriptSummaryTextBlock.Text = "No script selected."
         $ui.ScriptSummaryTextBlock.Foreground = [System.Windows.Media.Brushes]::DimGray
+        Set-PreviewBadge -Text "No script selected" -Background "#E8EEF5" -Foreground "#60758D"
         Update-ActionState
         return
     }
@@ -784,15 +1078,12 @@ function Update-ScriptDescriptionView {
         # Handle .ps1 files: display as code block.
         $extension = [System.IO.Path]::GetExtension($resolvedPath).ToLower()
         if ($extension -eq '.ps1') {
-            $codeParagraph = [System.Windows.Documents.Paragraph]::new()
-            $codeParagraph.FontFamily = $UIConstants.ConsoleFont
-            $codeParagraph.Background = [System.Windows.Media.Brushes]::LightGray
-            $codeParagraph.Padding = "5"
-            $codeParagraph.Inlines.Add([System.Windows.Documents.Run]::new($fileContent))
+            $codeParagraph = New-CodePreviewParagraph -Content $fileContent
             $doc.Blocks.Add($codeParagraph)
             $ui.ScriptDescriptionViewer.Document = $doc
             $ui.ScriptSummaryTextBlock.Text = "PowerShell script | $resolvedPath"
             $ui.ScriptSummaryTextBlock.Foreground = [System.Windows.Media.Brushes]::DimGray
+            Set-PreviewBadge -Text "PowerShell" -Background "#E7F5EC" -Foreground "#1F7A45"
             Update-ActionState
             return
         }
@@ -814,18 +1105,14 @@ function Update-ScriptDescriptionView {
             Add-ScriptInputSummaryToDocument -InputDefinitions $inputDefinitions -Document $doc
 
             # Add formatted code block.
-            $codeParagraph = [System.Windows.Documents.Paragraph]::new()
-            $codeParagraph.FontFamily = $UIConstants.ConsoleFont
-            $codeParagraph.Background = [System.Windows.Media.Brushes]::LightGray
-            $codeParagraph.Padding = "5"
-            $codeParagraph.Margin = "0,10,0,10"
-            $codeParagraph.Inlines.Add([System.Windows.Documents.Run]::new($codeContent))
+            $codeParagraph = New-CodePreviewParagraph -Content $codeContent
             $doc.Blocks.Add($codeParagraph)
 
             # Process markdown after code block.
             Convert-MarkdownToFlowDocument -Content $afterCode -Document $doc
             $ui.ScriptSummaryTextBlock.Text = "Markdown script | $($inputDefinitions.Count) input field(s) | $resolvedPath"
             $ui.ScriptSummaryTextBlock.Foreground = [System.Windows.Media.Brushes]::DimGray
+            Set-PreviewBadge -Text "Markdown - $($inputDefinitions.Count) input(s)" -Background "#DCEBFA" -Foreground "#0B5CAD"
         }
         else {
             # No code block found; treat entire file as markdown.
@@ -833,6 +1120,7 @@ function Update-ScriptDescriptionView {
             Add-ScriptInputSummaryToDocument -InputDefinitions $inputDefinitions -Document $doc
             $ui.ScriptSummaryTextBlock.Text = "Markdown note | $($inputDefinitions.Count) input field(s) | $resolvedPath"
             $ui.ScriptSummaryTextBlock.Foreground = [System.Windows.Media.Brushes]::OrangeRed
+            Set-PreviewBadge -Text "Markdown note" -Background "#FCE7D3" -Foreground "#B45309"
         }
     }
     catch {
@@ -842,6 +1130,7 @@ function Update-ScriptDescriptionView {
         $doc.Blocks.Add($errorPara)
         $ui.ScriptSummaryTextBlock.Text = "Unable to load selected script."
         $ui.ScriptSummaryTextBlock.Foreground = [System.Windows.Media.Brushes]::Red
+        Set-PreviewBadge -Text "Preview error" -Background "#FEE2E2" -Foreground "#B91C1C"
     }
 
     $ui.ScriptDescriptionViewer.Document = $doc
@@ -1089,22 +1378,35 @@ function Convert-MarkdownToFlowDocument {
     $Content.Split([Environment]::NewLine) | ForEach-Object {
         $line = $_
         $paragraph = [System.Windows.Documents.Paragraph]::new()
-        $paragraph.Margin = "0"  # Tight spacing between paragraphs
+        $paragraph.Margin = "0,0,0,12"
+        $paragraph.Foreground = [System.Windows.Media.SolidColorBrush]::new(
+            [System.Windows.Media.ColorConverter]::ConvertFromString("#3A3A3A")
+        )
 
         # Determine header level and adjust formatting.
         if ($line.StartsWith("###")) {
-            $paragraph.FontSize = 14
-            $paragraph.FontWeight = "Bold"
+            $paragraph.FontSize = 18
+            $paragraph.FontWeight = "SemiBold"
+            $paragraph.Foreground = [System.Windows.Media.SolidColorBrush]::new(
+                [System.Windows.Media.ColorConverter]::ConvertFromString("#51525A")
+            )
             $line = $line.Substring(3).Trim()
         }
         elseif ($line.StartsWith("##")) {
-            $paragraph.FontSize = 16
-            $paragraph.FontWeight = "Bold"
+            $paragraph.FontSize = 22
+            $paragraph.FontWeight = "SemiBold"
+            $paragraph.Foreground = [System.Windows.Media.SolidColorBrush]::new(
+                [System.Windows.Media.ColorConverter]::ConvertFromString("#42444C")
+            )
             $line = $line.Substring(2).Trim()
         }
         elseif ($line.StartsWith("#")) {
-            $paragraph.FontSize = 20
-            $paragraph.FontWeight = "Bold"
+            $paragraph.FontSize = 28
+            $paragraph.FontWeight = "SemiBold"
+            $paragraph.Margin = "0,0,0,16"
+            $paragraph.Foreground = [System.Windows.Media.SolidColorBrush]::new(
+                [System.Windows.Media.ColorConverter]::ConvertFromString("#1F1F1F")
+            )
             $line = $line.Substring(1).Trim()
         }
 
@@ -1250,6 +1552,10 @@ $ui.ImportFromFileButton.add_Click({
 
 $ui.ComputerInputTextBox.add_TextChanged({ 
     Update-ComputerListView 
+})
+
+$ui.AddComputerButton.add_Click({
+    Update-ComputerListView
 })
 
 $ui.ScriptSelectionComboBox.add_SelectionChanged({ 
@@ -1572,9 +1878,27 @@ $ui.ClearConsoleButton.add_Click({
     # Clear all text blocks from the output console.
     try {
         $ui.OutputConsole.Document.Blocks.Clear()
+        Update-ActionState
     }
     catch {
         Write-Verbose "Error clearing console output: $($_.Exception.Message)"
+    }
+})
+
+$ui.CopyConsoleButton.add_Click({
+    try {
+        $range = [System.Windows.Documents.TextRange]::new(
+            $ui.OutputConsole.Document.ContentStart,
+            $ui.OutputConsole.Document.ContentEnd
+        )
+
+        if (-not [string]::IsNullOrWhiteSpace($range.Text)) {
+            [System.Windows.Clipboard]::SetText($range.Text)
+            Set-StatusMessage -Text "Copied console output to clipboard." -Color $ColorConstants.Success
+        }
+    }
+    catch {
+        Add-OutputLine -Text "Unable to copy console output: $($_.Exception.Message)" -Color $ColorConstants.Error
     }
 })
 #endregion
@@ -1594,6 +1918,7 @@ try {
     $ui.ComputerInputTextBox.Text = $localHostname
     Update-ComputerListView
 
+    $ui.OutputConsole.Document.PagePadding = "0"
     Add-OutputLine -Text "Admin Tool initialized successfully. Local hostname: $localHostname" -Color $ColorConstants.Success
     Set-StatusMessage -Text "Ready. Loaded admin tool for $localHostname." -Color $ColorConstants.Success
     Update-ActionState

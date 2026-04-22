@@ -20,14 +20,21 @@ The entire application is a single PowerShell script with no external module dep
 *   **Graphical User Interface**: Built with WPF for a user-friendly experience.
 *   **Script Library Management**:
     *   Add and remove your own custom scripts to a persistent library.
-    *   The library is managed via a simple `scripts.xml` file, making it easy to backup or share.
-*   **Markdown Support**: Write your scripts inside `.md` files to keep your code and documentation bundled together.
+    *   The library is managed via a simple `scripts.xml` file, making it easy to back up or share.
+    *   Runnable scripts in the local `Scripts/` folder are auto-discovered on startup.
+*   **Markdown Script Support**:
+    *   Write scripts inside `.md` files to keep documentation and code together.
+    *   The app executes the first fenced `powershell` block in the markdown file.
+    *   Optional fenced `script-inputs` JSON metadata can be used to prompt for parameters before execution.
 *   **Formatted Script Preview**: The preview pane renders Markdown formatting (headers, bold) and displays PowerShell code in a distinct, monospaced block.
 *   **Alternate Credential Support**: Run scripts as another user by providing a username and password.
 *   **Multi-Computer Targeting**:
-    *   Enter comma-separated computer names or IP addresses.
+    *   Enter computer names or IP addresses separated by commas, semicolons, or new lines.
     *   Import a list of computers directly from a `.txt` or `.csv` file.
+    *   Duplicate targets are automatically removed from the visible target list.
+*   **Built-In Quick Action**: Use **Get Info** to gather basic remote system details without selecting a custom script.
 *   **Global Output Console**: All output, status messages, and errors from your scripts are displayed in one convenient, scrollable console.
+*   **Status Feedback**: The footer shows whether the app is idle or busy and displays short status updates during runs.
 *   **Self-Contained**: The entire tool is one `.ps1` file, requiring only PowerShell and the .NET Framework to run.
 
 ## Getting Started
@@ -50,13 +57,16 @@ The entire application is a single PowerShell script with no external module dep
     ```powershell
     .\AdminTool.ps1
     ```
-6.  On the first run, the tool will automatically create an empty `scripts.xml` file in the same directory. This will store your script library.
+6.  On the first run, the tool will create `scripts.xml` in the same directory if it does not already exist.
+7.  If the local `Scripts/` folder already contains runnable `.ps1` or markdown-backed `.md` scripts, the tool will auto-discover and add them to the library.
 
 ## Usage
 
 ### 1. Create a Script File
 
-The best way to use the tool is by creating `.md` (Markdown) files. This allows you to combine your documentation and code in one place for the best preview experience.
+The best way to use the tool is by creating `.md` (Markdown) files. This allows you to combine documentation and code in one place for the best preview experience.
+
+Important: markdown files are only runnable if they include a fenced `powershell` code block.
 
 **Example `Get-Local-Admins.md`:**
 
@@ -73,8 +83,37 @@ This script connects to the target computer and queries the members of the local
 - This script will fail if the target computer is offline.
 - The user running the script must have sufficient permissions.
 
-# This is the code that will be executed.
+```powershell
 Get-LocalGroupMember -Group "Administrators" | Select-Object Name, PrincipalSource, ObjectClass
+```
+````
+
+### Optional: Prompt for Inputs
+
+Markdown-backed scripts can prompt for input before execution by including a fenced `script-inputs` block containing JSON metadata.
+
+Example:
+
+````markdown
+# Find a Local User
+
+```script-inputs
+[
+  {
+    "Name": "UserName",
+    "Label": "User name",
+    "Type": "text",
+    "Required": true,
+    "Help": "Enter the local user account name to look up."
+  }
+]
+```
+
+```powershell
+param($UserName)
+
+Get-LocalUser -Name $UserName
+```
 ````
 
 ### 2\. Add the Script to the Library
@@ -99,11 +138,22 @@ Get-LocalGroupMember -Group "Administrators" | Select-Object Name, PrincipalSour
 
 4.  Select your desired script from the Select & Run Action dropdown menu.
 
-5.  The Script Preview pane will show you the full contents of the file, including the code that will be run.
+5.  The Script Preview pane will show the script content, and the summary text under the selector will indicate whether the file is a PowerShell script or a markdown-backed script with inputs.
 
-6.  Click Run Selected Script.
+6.  If the selected markdown script defines `script-inputs`, fill out the prompt dialog and continue.
 
-7.  Watch the output appear in the Global Output Console at the bottom.
+7.  Click Run Selected Script.
+
+8.  Watch the output appear in the Global Output Console at the bottom while the footer shows run status.
+
+### 4. Use Get Info
+
+If you want a quick built-in remote check without selecting a custom script:
+
+1.  Enter one or more target computers.
+2.  Optionally provide alternate credentials.
+3.  Click **Get Info**.
+4.  The tool will query each target and display basic operating system, model, and uptime information in the output console.
 
 Remote Configuration (Important!)
 ---------------------------------
