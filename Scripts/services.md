@@ -1,86 +1,73 @@
 # Services
 
-In the realm of security analysis, understanding the intricacies of services running on Windows machines is crucial. The `Get-ServiceInfo` function is designed to leverage the `Get-WmiObject win32_service` cmdlet, a powerful tool that offers a comprehensive view of service-related details not readily available through Get-Service. This cmdlet's ability to list associated process information, including the process ID and the parent process details, sets it apart. Such information is vital for assessing the services' context, including their origin and behavior, which could indicate normal operations or potentially malicious activity.
-The function enriches this analysis by extracting detailed attributes for each service, including its display name, description, path, and startup configuration, alongside the vital process linkage. By also identifying the parent process, the function allows for a deeper dive into the service's execution context, offering insights into how services are launched and their interdependencies. This holistic approach to gathering service information is indispensable to ensure system integrity and security.
+Review services, their current state, startup mode, and related process lineage.
 
-## Get-ServiceInfo Function
-
-```powershell
-function Get-ServiceInfo
-{
-    [cmdletbinding()]
-    Param
-    (
-        [Parameter(ValueFromPipeline=$true)]
-        [string[]]
-        $ComputerName,
-
-        [pscredential]
-        $Credential
-    )
-    Begin
-    {
-        If (!$Credential) {$Credential = Get-Credential}
-    }
-    Process
-    {
-        $services = Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {
-            Get-CimInstance -Class Win32_Service | ForEach-Object {
-                [PSCustomObject]@{
-                    "CSName"             = $_.SystemName
-                    "PSComputerName"     = $_.PSComputerName
-                    "ServiceName"        = $_.Name
-                    "ServiceState"       = $_.State
-                    "SystemName"         = $_.SystemName
-                    "ServiceDisplayName" = $_.DisplayName
-                    "ServiceDescription" = $_.Description
-                    "PathName"           = $_.PathName
-                    "InstallDate"        = $_.InstallDate
-                    "ProcessId"          = $_.ProcessId
-                    "ProcessName"        = (Get-WmiObject -Class Win32_Process -Filter "ProcessId='$($_.ProcessId)'").Name
-                    "ParentProcessID"    = (Get-WmiObject -Class Win32_Process -Filter "ProcessId='$($_.ProcessId)'").ParentProcessID
-                    "ParentProcessName"  = (Get-Process -ID (Get-WmiObject -Class Win32_Process -Filter "ProcessId='$($_.ProcessId)'").ParentProcessID).Name
-                    "StartMode"          = $_.StartMode
-                    "ExitCode"           = $_.ExitCode
-                    "DelayedAutoStart"   = $_.DelayedAutoStart
-                    "Time"               = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
-                    "UTCTime"            = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
-                }
-            }
-        }
-        $services
-    }
-} 
+```script-inputs
+[
+  {
+    "Name": "NameFilter",
+    "Label": "Service name contains",
+    "Type": "text",
+    "Default": "",
+    "Help": "Leave blank to return every service."
+  },
+  {
+    "Name": "State",
+    "Label": "State",
+    "Type": "choice",
+    "Default": "All",
+    "Options": ["All", "Running", "Stopped"],
+    "Help": "Filter the results by current service state."
+  }
+]
 ```
 
-## Get-ServiceInfo Usage Example
-
 ```powershell
-# Change creds as needed
-$username = 'Administrator'
-$password = 'P@55w0rd!!'
+param(
+    [string]$NameFilter = '',
+    [string]$State = 'All'
+)
 
-# Create Credential Object
-[SecureString]$secureString = $password | ConvertTo-SecureString -AsPlainText -Force
-[PSCredential]$creds = New-Object System.Management.Automation.PSCredential -ArgumentList $username, $secureString
+$services = Get-CimInstance -ClassName Win32_Service
+$processLookup = @{}
 
-# Define Targets
-$comps = ’192.168.1.2’, ‘192.168.1.3’, ‘192.168.1.4’
+foreach ($process in Get-CimInstance -ClassName Win32_Process) {
+    $processLookup[[int]$process.ProcessId] = $process
+}
 
-# Services function
-$services = Get-ServiceInfo -ComputerName $comps -Credential $creds
+if ($NameFilter) {
+    $services = $services | Where-Object {
+        $_.Name -like "*$NameFilter*" -or $_.DisplayName -like "*$NameFilter*"
+    }
+}
 
-# Define the path to save the file
-$fileName = "ServiceList.csv"
-$tempPath = Join-Path -Path $env:TEMP -ChildPath $fileName
+if ($State -ne 'All') {
+    $services = $services | Where-Object { $_.State -eq $State }
+}
 
-#Export the process information to a CSV file
-$services | Select CSName, PSComputerName, ServiceName, ServiceDisplayName, ServiceDescription, ServiceState, PathName, ProcessName, ProcessId, ParentProcessName, ParentProcessId, StartMode  | Export-Csv -Path $tempPath  -NoTypeInformation
+$services | ForEach-Object {
+    $process = $processLookup[[int]$_.ProcessId]
+    $parentProcess = $null
 
-# Tell user where file is saved
-Write-Host "Service list saved to: $tempPath" 
+    if ($process -and $processLookup.ContainsKey([int]$process.ParentProcessId)) {
+        $parentProcess = $processLookup[[int]$process.ParentProcessId]
+    }
+
+    [PSCustomObject]@{
+        CSName             = $env:COMPUTERNAME
+        ServiceName        = $_.Name
+        ServiceDisplayName = $_.DisplayName
+        ServiceDescription = $_.Description
+        ServiceState       = $_.State
+        StartMode          = $_.StartMode
+        ProcessId          = $_.ProcessId
+        ProcessName        = if ($process) { $process.Name } else { $null }
+        ParentProcessId    = if ($parentProcess) { $parentProcess.ProcessId } else { $null }
+        ParentProcessName  = if ($parentProcess) { $parentProcess.Name } else { $null }
+        PathName           = $_.PathName
+        ExitCode           = $_.ExitCode
+        DelayedAutoStart   = $_.DelayedAutoStart
+        Time               = Get-Date
+    }
+}
 ```
-
-## Get-ServiceInfo Sample Output\
-Listed below is sample output in the ServicesList.csv file that is created after running the script.
-![Get-ServiceInfo](images/services.png)

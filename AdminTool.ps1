@@ -137,6 +137,7 @@ $ColorConstants = @{
 # Regular expression patterns
 $RegexPatterns = @{
     PowerShellCodeBlock = '(?s)```powershell\s*(.*?)\s*```'
+    ScriptInputBlock    = '(?s)```script-inputs\s*(.*?)\s*```'
     BoldText            = '\*\*(.*?)\*\*'
 }
 
@@ -269,6 +270,229 @@ function Update-ScriptLibraryView {
     }
 }
 
+function Resolve-ScriptLibraryPath {
+    <#
+    .SYNOPSIS
+        Resolves a library path to an absolute file system path.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "Script path is empty."
+    }
+
+    if ([System.IO.Path]::IsPathRooted($Path)) {
+        return [System.IO.Path]::GetFullPath($Path)
+    }
+
+    return [System.IO.Path]::GetFullPath((Join-Path -Path $ScriptPath -ChildPath $Path))
+}
+
+function Get-ScriptInputDefinitionsFromContent {
+    <#
+    .SYNOPSIS
+        Reads script input metadata from markdown content.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Content
+    )
+
+    $match = [regex]::Match($Content, $RegexPatterns.ScriptInputBlock, 'IgnoreCase')
+    if (-not $match.Success) {
+        return @()
+    }
+
+    try {
+        $definitions = $match.Groups[1].Value | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        throw "Invalid script input definition block: $($_.Exception.Message)"
+    }
+
+    $normalizedDefinitions = @()
+    foreach ($definition in @($definitions)) {
+        if ([string]::IsNullOrWhiteSpace($definition.Name)) {
+            throw "Every script input must include a Name property."
+        }
+
+        $inputType = [string]$definition.Type
+        if ([string]::IsNullOrWhiteSpace($inputType)) {
+            $inputType = 'text'
+        }
+
+        $normalizedDefinitions += [PSCustomObject]@{
+            Name        = [string]$definition.Name
+            Label       = if ([string]::IsNullOrWhiteSpace($definition.Label)) { [string]$definition.Name } else { [string]$definition.Label }
+            Type        = $inputType.ToLower()
+            Required    = [bool]$definition.Required
+            Default     = $definition.Default
+            Help        = [string]$definition.Help
+            Placeholder = [string]$definition.Placeholder
+            Options     = @($definition.Options)
+        }
+    }
+
+    return $normalizedDefinitions
+}
+
+function Remove-ScriptInputBlock {
+    <#
+    .SYNOPSIS
+        Removes the custom script input metadata block from markdown content.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Content
+    )
+
+    return ([regex]::Replace($Content, $RegexPatterns.ScriptInputBlock, '', 'IgnoreCase')).Trim()
+}
+
+function Get-ScriptInputDefinitions {
+    <#
+    .SYNOPSIS
+        Loads input definitions for a script file.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath
+    )
+
+    $resolvedPath = Resolve-ScriptLibraryPath -Path $FilePath
+    if ([System.IO.Path]::GetExtension($resolvedPath).ToLower() -ne '.md') {
+        return @()
+    }
+
+    $content = Get-Content -Path $resolvedPath -Raw -ErrorAction Stop
+    return @(Get-ScriptInputDefinitionsFromContent -Content $content)
+}
+
+function Test-ScriptFileIsRunnable {
+    <#
+    .SYNOPSIS
+        Checks whether a script file can be executed by the app.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath
+    )
+
+    try {
+        $resolvedPath = Resolve-ScriptLibraryPath -Path $FilePath
+    }
+    catch {
+        return $false
+    }
+
+    if (-not (Test-Path -Path $resolvedPath -PathType Leaf)) {
+        return $false
+    }
+
+    $extension = [System.IO.Path]::GetExtension($resolvedPath).ToLower()
+    if ($extension -eq '.ps1') {
+        return $true
+    }
+
+    if ($extension -ne '.md') {
+        return $false
+    }
+
+    try {
+        $content = Get-Content -Path $resolvedPath -Raw -ErrorAction Stop
+        return [regex]::IsMatch((Remove-ScriptInputBlock -Content $content), $RegexPatterns.PowerShellCodeBlock, 'IgnoreCase')
+    }
+    catch {
+        return $false
+    }
+}
+
+function Auto-DiscoverScripts {
+    <#
+    .SYNOPSIS
+        Adds scripts from the local Scripts directory to the library if missing.
+    .DESCRIPTION
+        Scans the repository's Scripts directory for supported script files and appends
+        any missing entries to scripts.xml. Existing entries are matched by resolved file path
+        so relative and absolute paths do not get duplicated.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $scriptsDirectory = Join-Path -Path $ScriptPath -ChildPath "Scripts"
+
+    if (-not (Test-Path -Path $scriptsDirectory -PathType Container)) {
+        return
+    }
+
+    try {
+        if (-not (Test-Path -Path $ScriptsXmlPath -PathType Leaf)) {
+            [System.IO.File]::WriteAllText($ScriptsXmlPath, $FileConstants.DefaultXmlContent)
+        }
+
+        [xml]$scriptsXml = Get-Content -Path $ScriptsXmlPath -ErrorAction Stop
+        $updated = $false
+        $existingPaths = @()
+
+        foreach ($node in @($scriptsXml.scripts.script)) {
+            if ([string]::IsNullOrWhiteSpace($node.path)) {
+                continue
+            }
+
+            try {
+                $existingPaths += Resolve-ScriptLibraryPath -Path $node.path
+            }
+            catch {
+                $existingPaths += $node.path
+            }
+        }
+
+        foreach ($file in Get-ChildItem -Path $scriptsDirectory -File) {
+            if ([System.IO.Path]::GetExtension($file.FullName).ToLower() -notin $SupportedExtensions) {
+                continue
+            }
+
+            $discoveredPath = Join-Path -Path 'Scripts' -ChildPath $file.Name
+            if (-not (Test-ScriptFileIsRunnable -FilePath $discoveredPath)) {
+                continue
+            }
+
+            $resolvedPath = Resolve-ScriptLibraryPath -Path $discoveredPath
+            if ($resolvedPath -in $existingPaths) {
+                continue
+            }
+
+            $scriptElement = $scriptsXml.CreateElement($FileConstants.ScriptElement)
+            $nameElement = $scriptsXml.CreateElement($FileConstants.ScriptNameElement)
+            $nameElement.InnerText = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
+            $pathElement = $scriptsXml.CreateElement($FileConstants.ScriptPathElement)
+            $pathElement.InnerText = $discoveredPath
+
+            $scriptElement.AppendChild($nameElement) | Out-Null
+            $scriptElement.AppendChild($pathElement) | Out-Null
+            $scriptsXml.DocumentElement.AppendChild($scriptElement) | Out-Null
+
+            $existingPaths += $resolvedPath
+            $updated = $true
+        }
+
+        if ($updated) {
+            $scriptsXml.Save($ScriptsXmlPath)
+        }
+    }
+    catch {
+        Add-OutputLine -Text "Error during script auto-discovery: $($_.Exception.Message)" -Color $ColorConstants.Error
+    }
+}
+
 function Get-ScriptCodeFromFile {
     <#
     .SYNOPSIS
@@ -289,19 +513,21 @@ function Get-ScriptCodeFromFile {
         [string]$FilePath
     )
 
+    $resolvedPath = Resolve-ScriptLibraryPath -Path $FilePath
+
     # Validate file existence.
-    if (-not (Test-Path -Path $FilePath -PathType Leaf)) {
-        throw "Script file not found: $FilePath"
+    if (-not (Test-Path -Path $resolvedPath -PathType Leaf)) {
+        throw "Script file not found: $resolvedPath"
     }
 
     # Validate file extension.
-    $extension = [System.IO.Path]::GetExtension($FilePath).ToLower()
+    $extension = [System.IO.Path]::GetExtension($resolvedPath).ToLower()
     if ($extension -notin $SupportedExtensions) {
         throw "Unsupported file extension: $extension. Supported: $($SupportedExtensions -join ', ')"
     }
 
     try {
-        $fileContent = Get-Content -Path $FilePath -Raw -ErrorAction Stop
+        $fileContent = Get-Content -Path $resolvedPath -Raw -ErrorAction Stop
     }
     catch {
         throw "Failed to read script file: $($_.Exception.Message)"
@@ -312,6 +538,8 @@ function Get-ScriptCodeFromFile {
         return $fileContent
     }
 
+    $fileContent = Remove-ScriptInputBlock -Content $fileContent
+
     # For Markdown files, extract PowerShell code block.
     $codeBlockRegex = $RegexPatterns.PowerShellCodeBlock
     $match = [regex]::Match($fileContent, $codeBlockRegex, 'IgnoreCase')
@@ -321,7 +549,62 @@ function Get-ScriptCodeFromFile {
         return $match.Groups[1].Value.Trim()
     }
     else {
-        throw "No PowerShell code block found. Expected: \`\`\`powershell...\`\`\`"
+        throw 'No PowerShell code block found. Expected: ```powershell...```'
+    }
+}
+
+function Add-ScriptInputSummaryToDocument {
+    <#
+    .SYNOPSIS
+        Renders script input definitions inside the preview pane.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$InputDefinitions,
+        [Parameter(Mandatory = $true)]
+        [System.Windows.Documents.FlowDocument]$Document
+    )
+
+    if ($InputDefinitions.Count -eq 0) {
+        return
+    }
+
+    $heading = [System.Windows.Documents.Paragraph]::new()
+    $heading.Margin = "0,10,0,4"
+    $heading.FontSize = 16
+    $heading.FontWeight = "Bold"
+    $heading.Inlines.Add([System.Windows.Documents.Run]::new("Inputs"))
+    $Document.Blocks.Add($heading)
+
+    foreach ($definition in $InputDefinitions) {
+        $parts = @()
+        $parts += $definition.Label
+        $parts += "[$($definition.Type)]"
+
+        if ($definition.Required) {
+            $parts += "required"
+        }
+        else {
+            $parts += "optional"
+        }
+
+        if ($null -ne $definition.Default -and -not [string]::IsNullOrWhiteSpace([string]$definition.Default)) {
+            $parts += "default: $($definition.Default)"
+        }
+
+        $paragraph = [System.Windows.Documents.Paragraph]::new()
+        $paragraph.Margin = "0"
+        $paragraph.Inlines.Add([System.Windows.Documents.Run]::new("- " + ($parts -join " | ")))
+        $Document.Blocks.Add($paragraph)
+
+        if (-not [string]::IsNullOrWhiteSpace($definition.Help)) {
+            $helpParagraph = [System.Windows.Documents.Paragraph]::new()
+            $helpParagraph.Margin = "10,0,0,4"
+            $helpParagraph.Foreground = [System.Windows.Media.Brushes]::DimGray
+            $helpParagraph.Inlines.Add([System.Windows.Documents.Run]::new($definition.Help))
+            $Document.Blocks.Add($helpParagraph)
+        }
     }
 }
 
@@ -393,14 +676,15 @@ function Update-ScriptDescriptionView {
 
     try {
         # Validate script file still exists.
-        if (-not (Test-Path -Path $selectedScript.Path -PathType Leaf)) {
-            throw "Script file no longer exists: $($selectedScript.Path)"
+        $resolvedPath = Resolve-ScriptLibraryPath -Path $selectedScript.Path
+        if (-not (Test-Path -Path $resolvedPath -PathType Leaf)) {
+            throw "Script file no longer exists: $resolvedPath"
         }
 
-        $fileContent = Get-Content -Path $selectedScript.Path -Raw -ErrorAction Stop
+        $fileContent = Get-Content -Path $resolvedPath -Raw -ErrorAction Stop
 
         # Handle .ps1 files: display as code block.
-        $extension = [System.IO.Path]::GetExtension($selectedScript.Path).ToLower()
+        $extension = [System.IO.Path]::GetExtension($resolvedPath).ToLower()
         if ($extension -eq '.ps1') {
             $codeParagraph = [System.Windows.Documents.Paragraph]::new()
             $codeParagraph.FontFamily = $UIConstants.ConsoleFont
@@ -413,6 +697,8 @@ function Update-ScriptDescriptionView {
         }
 
         # Handle .md files: parse for formatting.
+        $inputDefinitions = @(Get-ScriptInputDefinitionsFromContent -Content $fileContent)
+        $fileContent = Remove-ScriptInputBlock -Content $fileContent
         $codeBlockRegex = $RegexPatterns.PowerShellCodeBlock
         $codeBlockMatch = [regex]::Match($fileContent, $codeBlockRegex)
 
@@ -424,6 +710,7 @@ function Update-ScriptDescriptionView {
 
             # Process markdown before code block.
             Convert-MarkdownToFlowDocument -Content $beforeCode -Document $doc
+            Add-ScriptInputSummaryToDocument -InputDefinitions $inputDefinitions -Document $doc
 
             # Add formatted code block.
             $codeParagraph = [System.Windows.Documents.Paragraph]::new()
@@ -440,6 +727,7 @@ function Update-ScriptDescriptionView {
         else {
             # No code block found; treat entire file as markdown.
             Convert-MarkdownToFlowDocument -Content $fileContent -Document $doc
+            Add-ScriptInputSummaryToDocument -InputDefinitions $inputDefinitions -Document $doc
         }
     }
     catch {
@@ -450,6 +738,216 @@ function Update-ScriptDescriptionView {
     }
 
     $ui.ScriptDescriptionViewer.Document = $doc
+}
+
+function Show-ScriptInputDialog {
+    <#
+    .SYNOPSIS
+        Prompts the user for script input values defined in markdown metadata.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$InputDefinitions,
+        [string]$ScriptName = "Script"
+    )
+
+    if ($InputDefinitions.Count -eq 0) {
+        return [ordered]@{}
+    }
+
+    $window = [System.Windows.Window]::new()
+    $window.Title = "Inputs: $ScriptName"
+    $window.Width = 500
+    $window.Height = 420
+    $window.WindowStartupLocation = "CenterOwner"
+    $window.ResizeMode = "CanResize"
+    $window.Owner = $ui.Window
+
+    $rootGrid = [System.Windows.Controls.Grid]::new()
+    $rootGrid.Margin = "12"
+    $rowTop = [System.Windows.Controls.RowDefinition]::new()
+    $rowTop.Height = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+    $rowBottom = [System.Windows.Controls.RowDefinition]::new()
+    $rowBottom.Height = [System.Windows.GridLength]::Auto
+    $rootGrid.RowDefinitions.Add($rowTop)
+    $rootGrid.RowDefinitions.Add($rowBottom)
+
+    $scrollViewer = [System.Windows.Controls.ScrollViewer]::new()
+    $scrollViewer.VerticalScrollBarVisibility = "Auto"
+    [System.Windows.Controls.Grid]::SetRow($scrollViewer, 0)
+
+    $fieldPanel = [System.Windows.Controls.StackPanel]::new()
+    $fieldPanel.Orientation = "Vertical"
+    $scrollViewer.Content = $fieldPanel
+
+    $buttonPanel = [System.Windows.Controls.StackPanel]::new()
+    $buttonPanel.Orientation = "Horizontal"
+    $buttonPanel.HorizontalAlignment = "Right"
+    $buttonPanel.Margin = "0,12,0,0"
+    [System.Windows.Controls.Grid]::SetRow($buttonPanel, 1)
+
+    $okButton = [System.Windows.Controls.Button]::new()
+    $okButton.Content = "OK"
+    $okButton.Width = 90
+    $okButton.Margin = "0,0,8,0"
+    $okButton.IsDefault = $true
+
+    $cancelButton = [System.Windows.Controls.Button]::new()
+    $cancelButton.Content = "Cancel"
+    $cancelButton.Width = 90
+    $cancelButton.IsCancel = $true
+
+    $buttonPanel.Children.Add($okButton) | Out-Null
+    $buttonPanel.Children.Add($cancelButton) | Out-Null
+
+    $rootGrid.Children.Add($scrollViewer) | Out-Null
+    $rootGrid.Children.Add($buttonPanel) | Out-Null
+    $window.Content = $rootGrid
+
+    $controls = @{}
+
+    foreach ($definition in $InputDefinitions) {
+        $label = [System.Windows.Controls.TextBlock]::new()
+        $label.FontWeight = "Bold"
+        $label.Margin = "0,0,0,4"
+        $label.Text = if ($definition.Required) { "$($definition.Label) *" } else { $definition.Label }
+        $fieldPanel.Children.Add($label) | Out-Null
+
+        $control = $null
+        switch ($definition.Type) {
+            'bool' {
+                $control = [System.Windows.Controls.CheckBox]::new()
+                $control.Margin = "0,0,0,4"
+                $control.IsChecked = [bool]$definition.Default
+            }
+            'choice' {
+                $control = [System.Windows.Controls.ComboBox]::new()
+                $control.Margin = "0,0,0,4"
+                foreach ($option in @($definition.Options)) {
+                    [void]$control.Items.Add([string]$option)
+                }
+
+                if ($control.Items.Count -gt 0) {
+                    if ($null -ne $definition.Default -and $control.Items.Contains([string]$definition.Default)) {
+                        $control.SelectedItem = [string]$definition.Default
+                    }
+                    else {
+                        $control.SelectedIndex = 0
+                    }
+                }
+            }
+            'multiline' {
+                $control = [System.Windows.Controls.TextBox]::new()
+                $control.Margin = "0,0,0,4"
+                $control.AcceptsReturn = $true
+                $control.TextWrapping = "Wrap"
+                $control.Height = 90
+                if ($null -ne $definition.Default) {
+                    $control.Text = [string]$definition.Default
+                }
+            }
+            default {
+                $control = [System.Windows.Controls.TextBox]::new()
+                $control.Margin = "0,0,0,4"
+                if ($null -ne $definition.Default) {
+                    $control.Text = [string]$definition.Default
+                }
+            }
+        }
+
+        if ($null -ne $control) {
+            if (-not [string]::IsNullOrWhiteSpace($definition.Placeholder) -and $control -is [System.Windows.Controls.TextBox]) {
+                $control.ToolTip = $definition.Placeholder
+            }
+
+            $fieldPanel.Children.Add($control) | Out-Null
+            $controls[$definition.Name] = $control
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($definition.Help)) {
+            $helpText = [System.Windows.Controls.TextBlock]::new()
+            $helpText.Margin = "0,0,0,10"
+            $helpText.Foreground = [System.Windows.Media.Brushes]::DimGray
+            $helpText.TextWrapping = "Wrap"
+            $helpText.Text = $definition.Help
+            $fieldPanel.Children.Add($helpText) | Out-Null
+        }
+        else {
+            $spacer = [System.Windows.Controls.TextBlock]::new()
+            $spacer.Margin = "0,0,0,10"
+            $fieldPanel.Children.Add($spacer) | Out-Null
+        }
+    }
+
+    $okButton.Add_Click({
+        foreach ($definition in $InputDefinitions) {
+            $control = $controls[$definition.Name]
+            $value = $null
+
+            switch ($definition.Type) {
+                'bool' { $value = [bool]$control.IsChecked }
+                'choice' { $value = [string]$control.SelectedItem }
+                default { $value = [string]$control.Text }
+            }
+
+            if ($definition.Required -and [string]::IsNullOrWhiteSpace([string]$value)) {
+                [System.Windows.MessageBox]::Show(
+                    "Please provide a value for '$($definition.Label)'.",
+                    "Missing Input",
+                    [System.Windows.MessageBoxButton]::OK,
+                    [System.Windows.MessageBoxImage]::Warning
+                ) | Out-Null
+                return
+            }
+
+            if ($definition.Type -eq 'int' -and -not [string]::IsNullOrWhiteSpace([string]$value)) {
+                $parsedValue = 0
+                if (-not [int]::TryParse([string]$value, [ref]$parsedValue)) {
+                    [System.Windows.MessageBox]::Show(
+                        "'$($definition.Label)' must be a whole number.",
+                        "Invalid Input",
+                        [System.Windows.MessageBoxButton]::OK,
+                        [System.Windows.MessageBoxImage]::Warning
+                    ) | Out-Null
+                    return
+                }
+            }
+        }
+
+        $window.DialogResult = $true
+    })
+
+    if ($window.ShowDialog() -ne $true) {
+        return $null
+    }
+
+    $result = [ordered]@{}
+    foreach ($definition in $InputDefinitions) {
+        $control = $controls[$definition.Name]
+
+        switch ($definition.Type) {
+            'bool' {
+                $result[$definition.Name] = [bool]$control.IsChecked
+            }
+            'int' {
+                if ([string]::IsNullOrWhiteSpace($control.Text)) {
+                    $result[$definition.Name] = $null
+                }
+                else {
+                    $result[$definition.Name] = [int]$control.Text
+                }
+            }
+            'choice' {
+                $result[$definition.Name] = [string]$control.SelectedItem
+            }
+            default {
+                $result[$definition.Name] = [string]$control.Text
+            }
+        }
+    }
+
+    return $result
 }
 
 function Convert-MarkdownToFlowDocument {
@@ -746,6 +1244,20 @@ $ui.RunScriptButton.add_Click({
     Add-OutputLine -Text "Starting script '$($selectedScript.Name)'..." -Color $ColorConstants.Highlight
     $window.Dispatcher.Invoke([Action] {}, "Background")
 
+    try {
+        $inputDefinitions = @(Get-ScriptInputDefinitions -FilePath $selectedScript.Path)
+    }
+    catch {
+        Add-OutputLine -Text "Fatal error loading script inputs: $($_.Exception.Message)" -Color $ColorConstants.Error
+        return
+    }
+
+    $scriptInputValues = Show-ScriptInputDialog -InputDefinitions $inputDefinitions -ScriptName $selectedScript.Name
+    if ($null -eq $scriptInputValues) {
+        Add-OutputLine -Text "Script execution canceled." -Color $ColorConstants.Warning
+        return
+    }
+
     # Extract script code from file.
     try {
         $scriptCode = Get-ScriptCodeFromFile -FilePath $selectedScript.Path
@@ -779,6 +1291,17 @@ $ui.RunScriptButton.add_Click({
         Add-OutputLine -Text "--- Executing on $computer ---" -Color $ColorConstants.Section
         try {
             $invokeParams["ComputerName"] = $computer
+            if ($inputDefinitions.Count -gt 0) {
+                $invokeParams["ArgumentList"] = @(
+                    foreach ($definition in $inputDefinitions) {
+                        $scriptInputValues[$definition.Name]
+                    }
+                )
+            }
+            elseif ($invokeParams.ContainsKey("ArgumentList")) {
+                $invokeParams.Remove("ArgumentList")
+            }
+
             $output = Invoke-Command @invokeParams
 
             if ($output) {
@@ -854,13 +1377,19 @@ $ui.AddScriptButton.add_Click({
             Add-OutputLine -Text "Unsupported file type. Supported: $($SupportedExtensions -join ', ')" -Color $ColorConstants.Error
             return
         }
+        if (-not (Test-ScriptFileIsRunnable -FilePath $newScriptPath)) {
+            Add-OutputLine -Text "That file does not contain a runnable PowerShell script block for the app." -Color $ColorConstants.Error
+            return
+        }
 
         # Add script to XML library.
         try {
             [xml]$scriptsXml = Get-Content -Path $ScriptsXmlPath -ErrorAction Stop
 
-            # Check for duplicate script names.
-            $existingScript = $scriptsXml.SelectSingleNode("//script[name='$newScriptName']") | Select-Object -First 1
+            # Check for duplicate script names without relying on fragile XPath string interpolation.
+            $existingScript = @($scriptsXml.scripts.script) | Where-Object {
+                $_.name -eq $newScriptName
+            } | Select-Object -First 1
             if ($null -ne $existingScript) {
                 Add-OutputLine -Text "A script with the name '$newScriptName' already exists." -Color $ColorConstants.Warning
                 return
@@ -899,11 +1428,9 @@ $ui.RemoveScriptButton.add_Click({
     try {
         [xml]$scriptsXml = Get-Content -Path $ScriptsXmlPath -ErrorAction Stop
 
-        # XPath to find the exact script node by name and path.
-        # Using proper XML escaping to handle special characters in names/paths.
-        $nodeToRemove = $scriptsXml.SelectSingleNode(
-            "//script[name='$($selectedItem.Name)' and path='$($selectedItem.Path)']"
-        )
+        $nodeToRemove = @($scriptsXml.scripts.script) | Where-Object {
+            $_.name -eq $selectedItem.Name -and $_.path -eq $selectedItem.Path
+        } | Select-Object -First 1
 
         if ($null -eq $nodeToRemove) {
             Add-OutputLine -Text "Script not found in library. It may have been removed already." -Color $ColorConstants.Warning
@@ -936,6 +1463,8 @@ $ui.ClearConsoleButton.add_Click({
 
 #region Application Start
 try {
+    Auto-DiscoverScripts
+
     # Initialize the script library from the XML file.
     Update-ScriptLibraryView
 

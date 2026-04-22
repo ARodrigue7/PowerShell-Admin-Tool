@@ -279,7 +279,7 @@ function Get-ScriptCodeFromFile {
     $match = [regex]::Match($fileContent, $codeBlockRegex, 'IgnoreCase')
     
     if ($match.Success) { 
-        return $match.Groups.Value.Trim() 
+        return $match.Groups[1].Value.Trim()
     } 
     else { 
         throw "Could not find a PowerShell code block (```powershell...```) in the specified .md file." 
@@ -345,7 +345,7 @@ function Update-ScriptDescriptionView {
 
         if ($codeBlockMatch.Success) {
             $beforeCode = $fileContent.Substring(0, $codeBlockMatch.Index)
-            $codeContent = $codeBlockMatch.Groups.Value
+            $codeContent = $codeBlockMatch.Groups[1].Value
             $afterCode = $fileContent.Substring($codeBlockMatch.Index + $codeBlockMatch.Length)
             
             # Process text before, the code, and text after
@@ -414,7 +414,7 @@ function Convert-MarkdownToFlowDocument {
             if ($parts[$i]) { $paragraph.Inlines.Add([System.Windows.Documents.Run]::new($parts[$i])) }
             # Add the bold text part if it exists
             if ($i -lt $matches.Count) {
-                $boldRun = [System.Windows.Documents.Run]::new($matches[$i].Groups.Value)
+                $boldRun = [System.Windows.Documents.Run]::new($matches[$i].Groups[1].Value)
                 $boldRun.FontWeight = "Bold"
                 $paragraph.Inlines.Add($boldRun)
             }

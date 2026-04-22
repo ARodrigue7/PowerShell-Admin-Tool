@@ -1,85 +1,68 @@
 # Network Connections
 
-In the pursuit of monitoring and securing network activities within a Windows environment, it's imperative to gain visibility into both inbound and outbound connections. The **Get-Connection** function emerges as a critical tool for this purpose, leveraging PowerShell to collect data on established TCP connections with pertinent process details. This function utilizes the **Get-NetTCPConnection** cmdlet to enumerate active connections and couples it with the **Get-CimInstance Win32_Process** cmdlet to fetch process information, thereby offering a holistic view of network interactions.
+Review active TCP connections together with the owning process and its parent.
 
-### Get-Connection Function
+```script-inputs
+[
+  {
+    "Name": "State",
+    "Label": "TCP state",
+    "Type": "choice",
+    "Default": "Established",
+    "Options": ["All", "Established", "Listen", "CloseWait", "TimeWait"],
+    "Help": "Choose All to skip state filtering."
+  },
+  {
+    "Name": "ProcessNameFilter",
+    "Label": "Process name contains",
+    "Type": "text",
+    "Default": "",
+    "Help": "Use this to narrow results to a single process family."
+  }
+]
+```
 
 ```powershell
-function Get-Connection {
-    [CmdletBinding()]
-    Param (
-        [Parameter(ValueFromPipeline=$true)]
-        [String[]]
-        $ComputerName,
-        [PSCredential]
-        $Credential
-    )
-    Begin {
-        If (!$Credential) {
-            $Credential = Get-Credential
-        }
+param(
+    [string]$State = 'Established',
+    [string]$ProcessNameFilter = ''
+)
+
+$connections = Get-NetTCPConnection
+if ($State -ne 'All') {
+    $connections = $connections | Where-Object { $_.State -eq $State }
+}
+
+$processLookup = @{}
+foreach ($process in Get-CimInstance -ClassName Win32_Process) {
+    $processLookup[[int]$process.ProcessId] = $process
+}
+
+$connections | ForEach-Object {
+    $process = $processLookup[[int]$_.OwningProcess]
+    if ($ProcessNameFilter -and $process.Name -notlike "*$ProcessNameFilter*") {
+        return
     }
-    Process {
-        $connections = Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {
-            $processes = Get-CimInstance Win32_Process
-            $connections = Get-NetTCPConnection -State Established
-            $connections | ForEach-Object {
-                $connection = $_
-                $process = $processes | Where-Object { $_.ProcessID -eq $connection.OwningProcess }
-                $parentProcessID = $process.ParentProcessID
-                $parentProcess = $processes | Where-Object { $_.ProcessID -eq $parentProcessID }
-                [PSCustomObject]@{
-                    PSComputerName   = $connection.PSComputerName
-                    CSName           = $process.CSName
-                    LocalAddress     = $connection.LocalAddress
-                    LocalPort        = $connection.LocalPort
-                    RemoteAddress    = $connection.RemoteAddress
-                    RemotePort       = $connection.RemotePort
-                    State            = $connection.State
-                    OwningProcess    = $connection.OwningProcess
-                    ProcessName      = $process.Name
-                    ProcessID        = $process.ProcessId
-                    ParentProcessID  = $parentProcess.ProcessID
-                    ParentProcess    = $parentProcess.Name
-                    CreationTime     = $connection.CreationTime
-                    Time             = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
-                    UTCTime          = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
-                }
-            }
-        }
-        $connections
+
+    $parentProcess = $null
+    if ($process -and $processLookup.ContainsKey([int]$process.ParentProcessId)) {
+        $parentProcess = $processLookup[[int]$process.ParentProcessId]
+    }
+
+    [PSCustomObject]@{
+        CSName          = $env:COMPUTERNAME
+        LocalAddress    = $_.LocalAddress
+        LocalPort       = $_.LocalPort
+        RemoteAddress   = $_.RemoteAddress
+        RemotePort      = $_.RemotePort
+        State           = $_.State
+        OwningProcess   = $_.OwningProcess
+        ProcessName     = if ($process) { $process.Name } else { $null }
+        ProcessId       = if ($process) { $process.ProcessId } else { $null }
+        ParentProcessId = if ($parentProcess) { $parentProcess.ProcessId } else { $null }
+        ParentProcess   = if ($parentProcess) { $parentProcess.Name } else { $null }
+        CreationTime    = $_.CreationTime
+        Time            = Get-Date
     }
 }
 ```
-
-### Get-Connection Usage Example
-
-```powershell
-# Change creds as needed
-$username = 'Administrator'
-$password = 'P@55w0rd!!'
-
-# Create Credential Object
-[SecureString]$secureString = $password | ConvertTo-SecureString -AsPlainText -Force
-[PSCredential]$creds = New-Object System.Management.Automation.PSCredential -ArgumentList $username, $secureString
-
-# Define Targets
-$comps = ’192.168.1.2’, ‘192.168.1.3’, ‘192.168.1.4’
-
-# Connections function
-$connections = Get-Connection -ComputerName $comps -Credential $creds
-
-# Define the path to save the file
-$fileName = "ConnectionList.csv"
-$tempPath = Join-Path -Path $env:TEMP -ChildPath $fileName
-
-#Export the process information to a CSV file
-$connections | Select CSName, PSComputerName, LocalAddress, LocalPort, RemoteAddress, RemotePort, State, ProcessName, ProcessID, ParentProcess, ParentProcessID, CreationTime  | Export-Csv -Path $tempPath  -NoTypeInformation
-
-# Tell user where file is saved
-Write-Host "Connection list saved to: $tempPath"
-```
-
-### Get-Connection Sample Output
-Listed below is sample output in the **ConnectionsList.csv** file that is created after running the script.
-![Get-Connection](images/get-connection.png)
