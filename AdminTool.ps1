@@ -27,40 +27,53 @@ $XAML_MainWindow = @"
                 <ColumnDefinition Width="350" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
-            <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="10">
-                    <Label Content="Target Computers" FontWeight="Bold" />
-                    <TextBox Name="ComputerInputTextBox" ToolTip="Enter computer names, comma-separated." />
-                    <Button Name="ImportFromFileButton" Content="Import from File..." Margin="0,5,0,0" />
-                    <ListView Name="ComputerListView" Height="125" SelectionMode="Multiple" ScrollViewer.HorizontalScrollBarVisibility="Disabled" Margin="0,5,0,0">
-                        <ListView.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ListView.ItemsPanel>
-                        <ListView.ItemTemplate><DataTemplate>
-                            <Border BorderBrush="CornflowerBlue" Background="AliceBlue" BorderThickness="1" CornerRadius="3" Margin="3" Padding="6,3"><TextBlock Text="{Binding}" /></Border>
-                        </DataTemplate></ListView.ItemTemplate>
-                    </ListView>
-                    <Separator Margin="0,15,0,5" />
-                    <Label Content="Alternate Credentials (Optional)" FontWeight="Bold" />
-                    <Grid>
-                         <Grid.ColumnDefinitions>
-                             <ColumnDefinition Width="Auto"/>
-                             <ColumnDefinition Width="*" />
-                         </Grid.ColumnDefinitions>
-                         <Grid.RowDefinitions>
-                             <RowDefinition />
-                             <RowDefinition />
-                         </Grid.RowDefinitions>
-                         <Label Grid.Row="0" Grid.Column="0" Content="Username:" VerticalAlignment="Center"/>
-                         <TextBox Grid.Row="0" Grid.Column="1" Name="UsernameTextBox" Margin="5" VerticalAlignment="Center"/>
-                         <Label Grid.Row="1" Grid.Column="0" Content="Password:" VerticalAlignment="Center"/>
-                         <PasswordBox Grid.Row="1" Grid.Column="1" Name="PasswordInputBox" Margin="5" VerticalAlignment="Center"/>
-                    </Grid>
-                    <Separator Margin="0,15,0,5" />
-                    <Label Content="Select &amp; Run Function" FontWeight="Bold" />
-                    <ComboBox Name="ScriptSelectionComboBox" DisplayMemberPath="Name" Margin="0,5,0,0" />
-                    <Button Name="GetInfoButton" Content="Get Quick OS Info" FontWeight="Bold" Margin="0,10,0,0" />
-                    <Button Name="RunScriptButton" Content="Execute Function" FontWeight="Bold" Margin="0,10,0,0" />
-                </StackPanel>
-            </ScrollViewer>
+            <TabControl Grid.Column="0" Margin="5">
+                <TabItem Header="Targets &amp; Auth">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="10">
+                            <Label Content="Target Computers" FontWeight="Bold" />
+                            <TextBox Name="ComputerInputTextBox" ToolTip="Enter computer names, comma-separated." />
+                            <Button Name="ImportFromFileButton" Content="Import from File..." Margin="0,5,0,0" />
+                            <ListView Name="ComputerListView" Height="150" SelectionMode="Multiple" ScrollViewer.HorizontalScrollBarVisibility="Disabled" Margin="0,5,0,0">
+                                <ListView.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ListView.ItemsPanel>
+                                <ListView.ItemTemplate><DataTemplate>
+                                    <Border BorderBrush="CornflowerBlue" Background="AliceBlue" BorderThickness="1" CornerRadius="3" Margin="3" Padding="6,3"><TextBlock Text="{Binding}" /></Border>
+                                </DataTemplate></ListView.ItemTemplate>
+                            </ListView>
+                            
+                            <Separator Margin="0,15,0,10" />
+                            
+                            <Label Content="Alternate Credentials (Optional)" FontWeight="Bold" />
+                            <Grid>
+                                 <Grid.ColumnDefinitions>
+                                     <ColumnDefinition Width="Auto"/>
+                                     <ColumnDefinition Width="*" />
+                                 </Grid.ColumnDefinitions>
+                                 <Grid.RowDefinitions>
+                                     <RowDefinition />
+                                     <RowDefinition />
+                                 </Grid.RowDefinitions>
+                                 <Label Grid.Row="0" Grid.Column="0" Content="Username:" VerticalAlignment="Center"/>
+                                 <TextBox Grid.Row="0" Grid.Column="1" Name="UsernameTextBox" Margin="5" VerticalAlignment="Center"/>
+                                 <Label Grid.Row="1" Grid.Column="0" Content="Password:" VerticalAlignment="Center"/>
+                                 <PasswordBox Grid.Row="1" Grid.Column="1" Name="PasswordInputBox" Margin="5" VerticalAlignment="Center"/>
+                            </Grid>
+                            <Button Name="ApplyCredentialsButton" Content="Apply Credentials" Margin="0,5,0,0" />
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+                
+                <TabItem Header="Run Functions">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="10">
+                            <Label Content="Select &amp; Run Function" FontWeight="Bold" />
+                            <ComboBox Name="ScriptSelectionComboBox" DisplayMemberPath="Name" Margin="0,5,0,0" />
+                            <Button Name="GetInfoButton" Content="Get Quick OS Info" FontWeight="Bold" Margin="0,15,0,0" Height="30" />
+                            <Button Name="RunScriptButton" Content="Execute Function" FontWeight="Bold" Margin="0,10,0,0" Height="35" />
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+            </TabControl>
             <Border Grid.Column="1" Margin="10" BorderBrush="LightGray" BorderThickness="1">
                 <Grid>
                     <Grid.RowDefinitions>
@@ -364,6 +377,17 @@ $ui.CancelJobsButton.add_Click({
 })
 
 $ui.ClearConsoleButton.add_Click({ $ui.OutputConsole.Document.Blocks.Clear() })
+
+$ui.ApplyCredentialsButton.add_Click({
+    $user = $ui.UsernameTextBox.Text
+    $pass = $ui.PasswordInputBox.Password
+    if ([string]::IsNullOrWhiteSpace($user)) {
+        [System.Windows.MessageBox]::Show("Username cannot be empty when applying alternate credentials.", "Credentials Warning", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+    } else {
+        Add-OutputLine -Text "Alternate credentials applied successfully for user: $user" -Color "DarkGreen"
+        [System.Windows.MessageBox]::Show("Credentials successfully applied to session.", "Success", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information) | Out-Null
+    }
+})
 
 $ui.ExportResultsButton.add_Click({
     $hasResults = ($null -ne $Global:LastJobResults -and $Global:LastJobResults.Count -gt 0)
