@@ -81,7 +81,8 @@ $XAML_MainWindow = @"
             <RichTextBox Name="OutputConsole" IsReadOnly="True" VerticalScrollBarVisibility="Auto" FontFamily="Consolas" />
             <StackPanel Grid.Column="1" VerticalAlignment="Top" Margin="5,0,0,0">
                 <Button Name="ClearConsoleButton" Content="Clear Console" Width="100" Margin="0,0,0,5" />
-                <Button Name="CancelJobsButton" Content="Cancel Jobs" Width="100" />
+                <Button Name="CancelJobsButton" Content="Cancel Jobs" Width="100" Margin="0,0,0,5" />
+                <Button Name="ExportResultsButton" Content="Export Results..." Width="100" />
             </StackPanel>
         </Grid>
     </Grid>
@@ -92,6 +93,7 @@ $XAML_MainWindow = @"
 #region Globals & Helper Functions
 $Global:ActiveJobs = @{}
 $Global:ModulePath = ""
+$Global:LastJobResults = $null
 
 function Add-OutputLine {
     [CmdletBinding()]
@@ -182,6 +184,7 @@ $ui.ComputerInputTextBox.add_TextChanged({ Update-ComputerListView })
 $ui.ScriptSelectionComboBox.add_SelectionChanged({ Update-ScriptDescriptionView })
 
 $ui.GetInfoButton.add_Click({
+    $Global:LastJobResults = $null
     $computers = $ui.ComputerListView.ItemsSource
     if (-not $computers) { Add-OutputLine -Text "No target computers specified." -Color "Red"; return }
     
@@ -240,9 +243,9 @@ $ui.GetInfoButton.add_Click({
             }
             
             $infoScript = {
-                $os = Get-WmiObject -ClassName Win32_OperatingSystem
-                $cs = Get-WmiObject -ClassName Win32_ComputerSystem
-                $uptime = (Get-Date) - $os.ConvertToDateTime($os.LastBootUpTime)
+                $os = Get-CimInstance -ClassName Win32_OperatingSystem
+                $cs = Get-CimInstance -ClassName Win32_ComputerSystem
+                $uptime = (Get-Date) - $os.LastBootUpTime
                 $upStr = "{0:N0} days, {1:D2}h:{2:D2}m:{3:D2}s" -f $uptime.Days, $uptime.Hours, $uptime.Minutes, $uptime.Seconds
                 return [PSCustomObject]@{ OS = $os.Caption; Model = $cs.Model; Uptime = $upStr }
             }
@@ -257,6 +260,7 @@ $ui.GetInfoButton.add_Click({
 })
 
 $ui.RunScriptButton.add_Click({
+    $Global:LastJobResults = $null
     $computers = $ui.ComputerListView.ItemsSource
     $selectedScript = $ui.ScriptSelectionComboBox.SelectedItem
     if (-not $computers) { Add-OutputLine -Text "No target computers specified." -Color "Red"; return }
@@ -360,6 +364,50 @@ $ui.CancelJobsButton.add_Click({
 })
 
 $ui.ClearConsoleButton.add_Click({ $ui.OutputConsole.Document.Blocks.Clear() })
+
+$ui.ExportResultsButton.add_Click({
+    $hasResults = ($null -ne $Global:LastJobResults -and $Global:LastJobResults.Count -gt 0)
+    $textRange = New-Object System.Windows.Documents.TextRange($ui.OutputConsole.Document.ContentStart, $ui.OutputConsole.Document.ContentEnd)
+    $consoleText = $textRange.Text.Trim()
+    
+    if (-not $hasResults -and [string]::IsNullOrWhiteSpace($consoleText)) {
+        [System.Windows.MessageBox]::Show("There are no results or console output to export.", "No Data", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+        return
+    }
+
+    $dlg = New-Object Microsoft.Win32.SaveFileDialog
+    $dlg.Title = "Export Output Results"
+    
+    if ($hasResults) {
+        $dlg.Filter = "CSV Files (*.csv)|*.csv|JSON Files (*.json)|*.json|Text Log Files (*.txt)|*.txt|All files (*.*)|*.*"
+        $dlg.DefaultExt = "csv"
+    } else {
+        $dlg.Filter = "Text Log Files (*.txt)|*.txt|All files (*.*)|*.*"
+        $dlg.DefaultExt = "txt"
+    }
+
+    if ($dlg.ShowDialog() -eq $true) {
+        try {
+            $ext = [System.IO.Path]::GetExtension($dlg.FileName).ToLower()
+            if ($ext -eq '.csv' -and $hasResults) {
+                $Global:LastJobResults | Export-Csv -Path $dlg.FileName -NoTypeInformation -Encoding utf8
+                Add-OutputLine -Text "Successfully exported job results to CSV: $($dlg.FileName)" -Color "Green"
+            }
+            elseif ($ext -eq '.json' -and $hasResults) {
+                $json = $Global:LastJobResults | ConvertTo-Json -Depth 5
+                [System.IO.File]::WriteAllText($dlg.FileName, $json, [System.Text.Encoding]::UTF8)
+                Add-OutputLine -Text "Successfully exported job results to JSON: $($dlg.FileName)" -Color "Green"
+            }
+            else {
+                [System.IO.File]::WriteAllText($dlg.FileName, $consoleText, [System.Text.Encoding]::UTF8)
+                Add-OutputLine -Text "Successfully exported console log to file: $($dlg.FileName)" -Color "Green"
+            }
+        }
+        catch {
+            Add-OutputLine -Text "Failed to export results: $($_.Exception.Message)" -Color "Red"
+        }
+    }
+})
 #endregion
 
 #region Job Monitor Timer
@@ -376,15 +424,20 @@ $timer.Add_Tick({
             Add-OutputLine -Text "--- Job Completed: $($job.Name) ---" -Color "DarkBlue"
             
             if ($allResults) {
+                $resultsList = [System.Collections.Generic.List[PSObject]]::new()
                 foreach ($item in $allResults) {
                     $comp = if ($item.PSComputerName) { $item.PSComputerName } else { "Output" }
                     if ($item -is [System.Management.Automation.ErrorRecord]) {
                         Add-OutputLine -Text "[$comp] ERROR: $($item.Exception.Message)" -Color "Red"
                     } else {
+                        $resultsList.Add($item)
                         ($item | Out-String).Split("`n") | ForEach-Object {
                             if (-not [string]::IsNullOrWhiteSpace($_)) { Add-OutputLine -Text "[$comp] $($_.Trim())" -Color "Black" }
                         }
                     }
+                }
+                if ($resultsList.Count -gt 0) {
+                    $Global:LastJobResults = $resultsList.ToArray()
                 }
             } else {
                 Add-OutputLine -Text "  (Job completed with no output.)" -Color "Gray"

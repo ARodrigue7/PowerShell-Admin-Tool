@@ -1,4 +1,4 @@
-﻿#----------------------------- PROCESSES-------------------------------
+#----------------------------- PROCESSES-------------------------------
 function Get-WmiProcess {
     [CmdletBinding()]
     Param (
@@ -18,7 +18,7 @@ function Get-WmiProcess {
 
     Process {
         $processes = Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {
-            $processes = Get-WmiObject win32_Process
+            $processes = Get-CimInstance -ClassName Win32_Process
             $processLookup = @{}
 
             # Create a lookup table for process IDs and names
@@ -36,7 +36,7 @@ function Get-WmiProcess {
                 $grandparentProcessID = $null
 
                 if ($parentProcessName) {
-                    $grandparentProcessID = (Get-WmiObject win32_Process -Filter "ProcessID = $parentProcessID" |
+                    $grandparentProcessID = (Get-CimInstance -ClassName Win32_Process -Filter "ProcessID = $parentProcessID" |
                         Select-Object -ExpandProperty ParentProcessID) -as [uint32]
 
                     if ($grandparentProcessID -ne 0) {
@@ -98,7 +98,19 @@ function Get-ServiceInfo
     Process
     {
         $services = Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {
+            $allProcesses = Get-CimInstance -ClassName Win32_Process
+            $processMap = @{}
+            foreach ($p in $allProcesses) { $processMap[$p.ProcessId] = $p }
+
             Get-CimInstance -Class Win32_Service | ForEach-Object {
+                $proc = $null
+                if ($_.ProcessId -and $processMap.ContainsKey($_.ProcessId)) {
+                    $proc = $processMap[$_.ProcessId]
+                }
+                $parentProcName = $null
+                if ($proc -and $proc.ParentProcessID -and $processMap.ContainsKey($proc.ParentProcessID)) {
+                    $parentProcName = $processMap[$proc.ParentProcessID].Name
+                }
                 [PSCustomObject]@{
                     "CSName"             = $_.SystemName
                     "PSComputerName"     = $_.PSComputerName
@@ -110,9 +122,9 @@ function Get-ServiceInfo
                     "PathName"           = $_.PathName
                     "InstallDate"        = $_.InstallDate
                     "ProcessId"          = $_.ProcessId
-                    "ProcessName"        = (Get-WmiObject -Class Win32_Process -Filter "ProcessId='$($_.ProcessId)'").Name
-                    "ParentProcessID"    = (Get-WmiObject -Class Win32_Process -Filter "ProcessId='$($_.ProcessId)'").ParentProcessID
-                    "ParentProcessName"  = (Get-Process -ID (Get-WmiObject -Class Win32_Process -Filter "ProcessId='$($_.ProcessId)'").ParentProcessID).Name
+                    "ProcessName"        = if ($proc) { $proc.Name } else { $null }
+                    "ParentProcessID"    = if ($proc) { $proc.ParentProcessID } else { $null }
+                    "ParentProcessName"  = $parentProcName
                     "StartMode"          = $_.StartMode
                     "ExitCode"           = $_.ExitCode
                     "DelayedAutoStart"   = $_.DelayedAutoStart
@@ -280,55 +292,6 @@ function Get-Prefetch
     }
 }
 
-<# Example
-
-# Change creds as needed
-$username = 'Administrator'
-$password = 'P@55w0rd!'
-
-# Create Credential Object
-[SecureString]$secureString = $password | ConvertTo-SecureString -AsPlainText -Force
-[PSCredential]$creds = New-Object System.Management.Automation.PSCredential -ArgumentList $username, $secureString
-
-$Prefetches = (Get-Prefetch -ComputerName "10.136.36.54" -Credential $creds)
-
-# Elasticsearch server URL
-$elasticsearchUrl = "https://10.109.35.100:9200"
-
-# Index name
-$indexName = "hap-prefetches"
-
-# Create the Elasticsearch document endpoint URL
-$documentUrl = "$elasticsearchUrl/$indexName/_doc"
-
-# Elasticsearch credentials
-$elasticUsername = 'elastic'
-$elasticPassword = 'Fy590f0TI7Wg7L0MO4Og44gd' # Password is on the TFPlenum home page
-
-# Create Elasticsearch Credential Object
-[SecureString]$elasticSecureString = ConvertTo-SecureString -String $elasticPassword -AsPlainText -Force
-[PSCredential]$elasticCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $elasticUsername, $elasticSecureString
-
-# This code will loop through each PowerShell object in the array
-# and send a document to the Elastic API
-
-foreach ($prefetch in $Prefetches) {
-    $prefetchData = @{
-        "prefetches" = $prefetch
-    }
-
-    # Convert the $Prefetches to JSON
-    $jsonData = $prefetchData | ConvertTo-Json
-
-    # Ignore SSL certificate validation
-    [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-
-    # Send the JSON data as the request body to create the document
-    Invoke-RestMethod -Method 'POST' -Uri $documentUrl -Body $jsonData -ContentType 'application/json' -Credential $elasticCredentials
-}
-#>
-
-
 # OS Information
 function Get-OSInfo 
 {
@@ -368,57 +331,6 @@ function Get-OSInfo
         $osData
     }
 }
-
-<# Example
-
-# Change creds as needed
-$username = 'Administrator'
-$password = 'P@55w0rd!'
-
-# Create Credential Object
-[SecureString]$secureString = $password | ConvertTo-SecureString -AsPlainText -Force
-[PSCredential]$creds = New-Object System.Management.Automation.PSCredential -ArgumentList $username, $secureString
-
-$OSInfo = (Get-OSInfo -ComputerName "10.136.36.54" -Credential $creds)
-
-# Elasticsearch server URL
-$elasticsearchUrl = "https://10.109.35.100:9200"
-
-# Index name
-$indexName = "hap-osinfo"
-
-# Create the Elasticsearch document endpoint URL
-$documentUrl = "$elasticsearchUrl/$indexName/_doc"
-
-# Elasticsearch credentials
-$elasticUsername = 'elastic'
-$elasticPassword = 'Fy590f0TI7Wg7L0MO4Og44gd' # Password is on the TFPlenum home page
-
-# Create Elasticsearch Credential Object
-[SecureString]$elasticSecureString = ConvertTo-SecureString -String $elasticPassword -AsPlainText -Force
-[PSCredential]$elasticCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $elasticUsername, $elasticSecureString
-
-# This code will loop through each PowerShell object in the array
-# and send a document to the Elastic API
-
-foreach ($os in $OSInfo) {
-    $osData = @{
-        "osInfo" = $os
-    }
-
-    # Convert the $OSInfo to JSON
-    $jsonData = $osData | ConvertTo-Json
-
-    # Ignore SSL certificate validation
-    [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-
-    # Send the JSON data as the request body to create the document
-    Invoke-RestMethod -Method 'POST' -Uri $documentUrl -Body $jsonData -ContentType 'application/json' -Credential $elasticCredentials
-}
-
-
-#>
-
 
 # Registry Run Keys
 function Get-RegistryRun
@@ -482,54 +394,6 @@ function Get-RegistryRun
         }
     }
 }
-<# Example
-
-# Change creds as needed
-$username = 'Administrator'
-$password = 'P@55w0rd!'
-
-# Create Credential Object
-[SecureString]$secureString = $password | ConvertTo-SecureString -AsPlainText -Force
-[PSCredential]$creds = New-Object System.Management.Automation.PSCredential -ArgumentList $username, $secureString
-
-$RegistryRun = Get-RegistryRun -ComputerName "10.136.36.54" -Credential $creds
-
-# Elasticsearch server URL
-$elasticsearchUrl = "https://10.109.35.100:9200"
-
-# Index name
-$indexName = "hap-registryrun"
-
-# Create the Elasticsearch document endpoint URL
-$documentUrl = "$elasticsearchUrl/$indexName/_doc"
-
-# Elasticsearch credentials
-$elasticUsername = 'elastic'
-$elasticPassword = 'Fy590f0TI7Wg7L0MO4Og44gd' # Password is on the TFPlenum home page
-
-# Create Elasticsearch Credential Object
-[SecureString]$elasticSecureString = ConvertTo-SecureString -String $elasticPassword -AsPlainText -Force
-[PSCredential]$elasticCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $elasticUsername, $elasticSecureString
-
-# This code will loop through each PowerShell object in the array
-# and send a document to the Elastic API
-
-foreach ($item in $RegistryRun) {
-    $registryData = @{
-        "registryRun" = $item
-    }
-
-    # Convert the $RegistryRun to JSON
-    $jsonData = $registryData | ConvertTo-Json
-
-    # Ignore SSL certificate validation
-    [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-
-    # Send the JSON data as the request body to create the document
-    Invoke-RestMethod -Method 'POST' -Uri $documentUrl -Body $jsonData -ContentType 'application/json' -Credential $elasticCredentials
-}
-
-#>
 
 function Get-RegistryUserShellFolders {
     [CmdletBinding()]
@@ -580,20 +444,7 @@ function Get-RegistryUserShellFolders {
 }
 
 
-# Change creds as needed
-$username = 'Administrator'
-$password = '8LegsOnTheSpider!'
 
-# Create Credential Object for Windows creds
-[SecureString]$secureString = $password | ConvertTo-SecureString -AsPlainText -Force
-[PSCredential]$Credential = New-Object System.Management.Automation.PSCredential -ArgumentList $username, $secureString
-
-
-# Change the ComputerNames or IP addresses as needed
-$ComputerName = 'localhost'
- 
-# Gather registry run data
-$registry = Get-RegistryUserShellFolders -ComputerName $ComputerName -Credential $Credential
 
 
 # Startup Folders
@@ -666,56 +517,6 @@ function Get-StartupFolders
     }
 }
 
-
-<# Example
-
-# Change creds as needed
-$username = 'Administrator'
-$password = 'P@55w0rd!'
-
-# Create Credential Object
-[SecureString]$secureString = $password | ConvertTo-SecureString -AsPlainText -Force
-[PSCredential]$creds = New-Object System.Management.Automation.PSCredential -ArgumentList $username, $secureString
-
-# Specify the target computer name
-$computerName = "10.136.36.54"
-
-# Retrieve startup folders data using Get-StartupFolders function
-$startupData = Get-StartupFolders -ComputerName $computerName -Credential $creds
-
-# Elasticsearch server URL
-$elasticsearchUrl = "https://10.109.35.100:9200"
-
-# Index name
-$indexName = "hap-startupfolders"
-
-# Elasticsearch credentials
-$elasticUsername = 'elastic'
-$elasticPassword = 'Fy590f0TI7Wg7L0MO4Og44gd' # Password is on the TFPlenum home page
-
-# Create Elasticsearch Credential Object
-[SecureString]$elasticSecureString = ConvertTo-SecureString -String $elasticPassword -AsPlainText -Force
-[PSCredential]$elasticCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $elasticUsername, $elasticSecureString
-
-# Set SSL certificate validation callback
-[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-
-# Create the Elasticsearch document endpoint URL
-$documentUrl = "$elasticsearchUrl/$indexName/_doc"
-
-# Loop through each startup item, convert to JSON, and send to Elasticsearch
-foreach ($startupItem in $startupData) {
-    $startupDataObj = @{
-        "startupItem" = $startupItem
-    }
-
-    $jsonData = $startupDataObj | ConvertTo-Json
-
-    # Send the JSON data as the request body to create the document
-    Invoke-RestMethod -Method 'POST' -Uri $documentUrl -Body $jsonData -ContentType 'application/json' -Credential
-}
-#>
-
 # Local Users
 function Get-LUser
 {
@@ -740,7 +541,7 @@ function Get-LUser
     Process
     {
         $usersData = Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {
-            Get-WmiObject -Class Win32_UserAccount -Filter "LocalAccount='True'" | ForEach-Object {
+            Get-CimInstance -ClassName Win32_UserAccount -Filter "LocalAccount='True'" | ForEach-Object {
                 [PSCustomObject]@{
                     "CSName"                      = $env:COMPUTERNAME
                     "LocalUserName"               = $_.Name
@@ -769,57 +570,6 @@ function Get-LUser
     }
 }
 
-<# Example
-
-# Change creds as needed
-$username = 'Administrator'
-$password = 'P@55w0rd!'
-
-# Create Credential Object
-[SecureString]$secureString = $password | ConvertTo-SecureString -AsPlainText -Force
-[PSCredential]$creds = New-Object System.Management.Automation.PSCredential -ArgumentList $username, $secureString
-
-# Specify the target computer name
-$computerName = "10.136.36.54"
-
-# Retrieve local users using Get-LUser function
-$users = Get-LUser -ComputerName $computerName -Credential $creds
-
-# Elasticsearch server URL
-$elasticsearchUrl = "https://10.109.35.100:9200"
-
-# Index name
-$indexName = "hap-localusers"
-
-# Elasticsearch credentials
-$elasticUsername = 'elastic'
-$elasticPassword = 'Fy590f0TI7Wg7L0MO4Og44gd' # Password is on the TFPlenum home page
-
-# Create Elasticsearch Credential Object
-[SecureString]$elasticSecureString = ConvertTo-SecureString -String $elasticPassword -AsPlainText -Force
-[PSCredential]$elasticCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $elasticUsername, $elasticSecureString
-
-# Set SSL certificate validation callback
-[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-
-# Create the Elasticsearch document endpoint URL
-$documentUrl = "$elasticsearchUrl/$indexName/_doc"
-
-# Loop through each user, convert to JSON, and send to Elasticsearch
-foreach ($user in $users) {
-    $userData = @{
-        "user" = $user
-    }
-
-    $jsonData = $userData | ConvertTo-Json
-
-    # Send the JSON data as the request body to create the document
-    Invoke-RestMethod -Method 'POST' -Uri $documentUrl -Body $jsonData -ContentType 'application/json' -Credential $elasticCredentials
-}
-
-
-#>
-
 # Local Groups
 function Get-LGroup
 {
@@ -844,7 +594,7 @@ function Get-LGroup
     Process
     {
         Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {
-            Get-WmiObject -Class Win32_Group
+            Get-CimInstance -ClassName Win32_Group
         } | ForEach-Object {
             [PSCustomObject]@{
                 "CSName"                 = $env:COMPUTERNAME
@@ -862,53 +612,6 @@ function Get-LGroup
         }
     }
 }
-
-<# Example
-
-# Change creds as needed
-$username = 'Administrator'
-$password = 'P@55w0rd!'
-
-# Create Credential Object
-[SecureString]$secureString = $password | ConvertTo-SecureString -AsPlainText -Force
-[PSCredential]$creds = New-Object System.Management.Automation.PSCredential -ArgumentList $username, $secureString
-
-$groups = Get-LGroup -ComputerName "10.136.36.54" -Credential $creds
-
-# Elasticsearch server URL
-$elasticsearchUrl = "https://10.109.35.100:9200"
-
-# Index name
-$indexName = "hap-localgroups"
-
-# Elasticsearch credentials
-$elasticUsername = 'elastic'
-$elasticPassword = 'Fy590f0TI7Wg7L0MO4Og44gd' # Password is on the TFPlenum home page
-
-# Create Elasticsearch Credential Object
-[SecureString]$elasticSecureString = ConvertTo-SecureString -String $elasticPassword -AsPlainText -Force
-[PSCredential]$elasticCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $elasticUsername, $elasticSecureString
-
-# Set SSL certificate validation callback
-[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-
-# Create the Elasticsearch document endpoint URL
-$documentUrl = "$elasticsearchUrl/$indexName/_doc"
-
-# Loop through each group, convert to JSON, and send to Elasticsearch
-foreach ($group in $groups) {
-    $groupData = @{
-        "group" = $group
-    }
-
-    $jsonData = $groupData | ConvertTo-Json
-
-    # Send the JSON data as the request body to create the document
-    Invoke-RestMethod -Method 'POST' -Uri $documentUrl -Body $jsonData -ContentType 'application/json' -Credential $elasticCredentials
-}
-
-
-#>
 
 # Local Group Members
 function Get-LGroupMembers
@@ -934,7 +637,7 @@ function Get-LGroupMembers
         Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {
             try
             {
-                foreach ($name in (Get-WmiObject -Class Win32_Group).Name) {
+                foreach ($name in (Get-CimInstance -ClassName Win32_Group).Name) {
                     [PSCustomObject]@{
                         CSName    = $env:COMPUTERNAME
                         GroupName = $name 
@@ -947,13 +650,15 @@ function Get-LGroupMembers
             }
             catch
             {
-                foreach ($name in (Get-WmiObject -Class Win32_Group).Name) {
+                $groupUsers = Get-CimInstance -ClassName Win32_GroupUser
+                foreach ($name in (Get-CimInstance -ClassName Win32_Group).Name) {
                     [PSCustomObject]@{
                         CSName    = $env:COMPUTERNAME
                         GroupName = $name 
-                        Member    = Get-WmiObject win32_groupuser | Where-Object {$_.groupcomponent -like "*$name*"} | ForEach-Object {  
-                            $_.partcomponent –match ".+Domain\=(.+)\,Name\=(.+)$" > $null  
-                            $matches[1].trim('"') + "\" + $matches[2].trim('"')  
+                        Member    = $groupUsers | Where-Object {$_.GroupComponent.Name -eq $name} | ForEach-Object {  
+                            if ($_.PartComponent) {
+                                "$($_.PartComponent.Domain)\$($_.PartComponent.Name)"
+                            }
                         }
                         Time      = (Get-Date).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'") 
                         UTCTime   = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'")    
@@ -963,55 +668,6 @@ function Get-LGroupMembers
         }
     } 
 }
-
-<# Example
-
-# Change creds as needed
-$username = 'Administrator'
-$password = 'P@55w0rd!'
-
-# Create Credential Object
-[SecureString]$secureString = $password | ConvertTo-SecureString -AsPlainText -Force
-[PSCredential]$creds = New-Object System.Management.Automation.PSCredential -ArgumentList $username, $secureString
-
-# Specify the target computer name
-$computerName = "10.136.36.54"
-
-# Retrieve group members data using Get-LGroupMembers function
-$groupMembersData = Get-LGroupMembers -ComputerName $computerName -Credential $creds
-
-# Elasticsearch server URL
-$elasticsearchUrl = "https://10.109.35.100:9200"
-
-# Index name
-$indexName = "hap-groupmembers"
-
-# Elasticsearch credentials
-$elasticUsername = 'elastic'
-$elasticPassword = 'Fy590f0TI7Wg7L0MO4Og44gd' # Password is on the TFPlenum home page
-
-# Create Elasticsearch Credential Object
-[SecureString]$elasticSecureString = ConvertTo-SecureString -String $elasticPassword -AsPlainText -Force
-[PSCredential]$elasticCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $elasticUsername, $elasticSecureString
-
-# Set SSL certificate validation callback
-[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-
-# Create the Elasticsearch document endpoint URL
-$documentUrl = "$elasticsearchUrl/$indexName/_doc"
-
-# Loop through each group member, convert to JSON, and send to Elasticsearch
-foreach ($groupMember in $groupMembersData) {
-    $groupMemberObj = @{
-        "groupMember" = $groupMember
-    }
-
-    $jsonData = $groupMemberObj | ConvertTo-Json
-
-    # Send the JSON data as the request body to create the document
-    Invoke-RestMethod -Method 'POST' -Uri $documentUrl -Body $jsonData -ContentType 'application/json' -Credential $elasticCredentials
-}
-#>
 
 # Shares
 function Get-ShareInfo
@@ -1046,56 +702,6 @@ function Get-ShareInfo
     }    
 }
 
-
-<# Example
-
-# Change creds as needed
-$username = 'Administrator'
-$password = 'P@55w0rd!'
-
-# Create Credential Object
-[SecureString]$secureString = $password | ConvertTo-SecureString -AsPlainText -Force
-[PSCredential]$creds = New-Object System.Management.Automation.PSCredential -ArgumentList $username, $secureString
-
-# Specify the target computer name
-$computerName = "10.136.36.54"
-
-# Retrieve share information using Get-ShareInfo function
-$shareInfo = Get-ShareInfo -ComputerName $computerName -Credential $creds
-
-# Elasticsearch server URL
-$elasticsearchUrl = "https://10.109.35.100:9200"
-
-# Index name
-$indexName = "hap-shares"
-
-# Elasticsearch credentials
-$elasticUsername = 'elastic'
-$elasticPassword = 'Fy590f0TI7Wg7L0MO4Og44gd' # Password is on the TFPlenum home page
-
-# Create Elasticsearch Credential Object
-[SecureString]$elasticSecureString = ConvertTo-SecureString -String $elasticPassword -AsPlainText -Force
-[PSCredential]$elasticCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $elasticUsername, $elasticSecureString
-
-# Set SSL certificate validation callback
-[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-
-# Create the Elasticsearch document endpoint URL
-$documentUrl = "$elasticsearchUrl/$indexName/_doc"
-
-# Loop through each share information, convert to JSON, and send to Elasticsearch
-foreach ($share in $shareInfo) {
-    $shareObj = @{
-        "share" = $share
-    }
-
-    $jsonData = $shareObj | ConvertTo-Json
-
-    # Send the JSON data as the request body to create the document
-    Invoke-RestMethod -Method 'POST' -Uri $documentUrl -Body $jsonData -ContentType 'application/json' -Credential $elasticCredentials
-}
-#>
-
 # Logon History
 function Get-LogOnHistory
 {
@@ -1118,24 +724,19 @@ function Get-LogOnHistory
     Process
     {
         Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {
-            $loggedOnUsers = Get-WmiObject win32_loggedonuser
-            $sessions = Get-WmiObject win32_logonsession
+            $loggedOnUsers = Get-CimInstance -ClassName Win32_LoggedOnUser
+            $sessions = Get-CimInstance -ClassName Win32_LogonSession
             $logons = @()
 
             foreach ($user in $loggedOnUsers)
             {
-                $user.Antecedent -match '.+Domain="(.+)",Name="(.+)"$' > $null
-                $domain = $matches[1]
-                $username = $matches[2]
-    
-                $user.Dependent -match '.+LogonId="(\d+)"$' > $null
-                $LogonId = $matches[1]
-
-                $logons += [PSCustomObject]@{
-                    Domain  = $domain
-                    User    = $username
-                    LogonId = $LogonId
-                }    
+                if ($user.Antecedent -and $user.Dependent) {
+                    $logons += [PSCustomObject]@{
+                        Domain  = $user.Antecedent.Domain
+                        User    = $user.Antecedent.Name
+                        LogonId = $user.Dependent.LogonId
+                    }
+                }
             }
 
             $logonDetail = foreach ($session in $sessions)
@@ -1152,7 +753,10 @@ function Get-LogOnHistory
                     Default { "Unknown" }
                 }
 
-                $startTime = [DateTime]::ParseExact($session.StartTime.Substring(0, 14), "yyyyMMddHHmmss", $null)
+                $startTimeUTC = $null
+                if ($session.StartTime) {
+                    $startTimeUTC = $session.StartTime.ToUniversalTime()
+                }
 
                 [PSCustomObject]@{
                     CSName        = $env:COMPUTERNAME
@@ -1162,7 +766,7 @@ function Get-LogOnHistory
                     LogonDomain   = ($logons | Where-Object { $_.LogonId -eq $session.LogonId }).Domain
                     LogonUser     = ($logons | Where-Object { $_.LogonId -eq $session.LogonId }).User
                     StartTime     = $session.StartTime
-                    StartTimeUTC  = $startTime.ToUniversalTime()
+                    StartTimeUTC  = $startTimeUTC
                     Time          = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
                 }
             }
@@ -1171,54 +775,6 @@ function Get-LogOnHistory
         }
     }    
 }
-
-<# Example
-# Change creds as needed
-$username = 'Administrator'
-$password = 'P@55w0rd!'
-
-# Create Credential Object
-[SecureString]$secureString = $password | ConvertTo-SecureString -AsPlainText -Force
-[PSCredential]$creds = New-Object System.Management.Automation.PSCredential -ArgumentList $username, $secureString
-
-# Specify the target computer name
-$computerName = "10.136.36.54"
-
-# Retrieve logon history using Get-LogOnHistory function
-$logonHistory = Get-LogOnHistory -ComputerName $computerName -Credential $creds
-
-# Elasticsearch server URL
-$elasticsearchUrl = "https://10.109.35.100:9200"
-
-# Index name
-$indexName = "hap-logonhistory"
-
-# Elasticsearch credentials
-$elasticUsername = 'elastic'
-$elasticPassword = 'Fy590f0TI7Wg7L0MO4Og44gd' # Password is on the TFPlenum home page
-
-# Create Elasticsearch Credential Object
-[SecureString]$elasticSecureString = ConvertTo-SecureString -String $elasticPassword -AsPlainText -Force
-[PSCredential]$elasticCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $elasticUsername, $elasticSecureString
-
-# Set SSL certificate validation callback
-[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-
-# Create the Elasticsearch document endpoint URL
-$documentUrl = "$elasticsearchUrl/$indexName/_doc"
-
-# Loop through each logon history, convert to JSON, and send to Elasticsearch
-foreach ($logon in $logonHistory) {
-    $logonObj = @{
-        "logon" = $logon
-    }
-
-    $jsonData = $logonObj | ConvertTo-Json
-
-    # Send the JSON data as the request body to create the document
-    Invoke-RestMethod -Method 'POST' -Uri $documentUrl -Body $jsonData -ContentType 'application/json' -Credential $elasticCredentials
-}
-#>
 
 #>
 
@@ -1393,47 +949,6 @@ function Get-CriticalEventXML
              } # End of Primary For Loop
     }
 
-<# Example
-# Elasticsearch server URL
-        $elasticsearchUrl = "https://10.109.35.100:9200"
-
-        # Index name
-        $indexName = "hap-eventlogs"
-
-        # Elasticsearch credentials
-        $elasticUsername = 'elastic'
-        $elasticPassword = 'Fy590f0TI7Wg7L0MO4Og44gd' # Password is on the TFPlenum home page
-
-        # Create Elasticsearch Credential Object
-        [SecureString]$elasticSecureString = ConvertTo-SecureString -String $elasticPassword -AsPlainText -Force
-        [PSCredential]$elasticCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $elasticUsername, $elasticSecureString
-
-        # Create the Elasticsearch document endpoint URL
-        $documentUrl = "$elasticsearchUrl/$indexName/_doc"
-
-        # Loop through each XML file, convert to JSON, and send to Elasticsearch
-        $xmlFiles = Get-ChildItem -Path $local_path -Filter "*-events.xml"
-
-        foreach ($file in $xmlFiles) {
-            $xmlData = Import-Clixml -Path $file.FullName
-
-            foreach ($event in $xmlData) {
-                $eventObj = @{
-                    "event" = $event
-                }
-
-                $jsonData = $eventObj | ConvertTo-Json
-
-                # Ignore SSL certificate validation
-                [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-
-                # Send the JSON data as the request body to create the document
-                Invoke-RestMethod -Method 'POST' -Uri $documentUrl -Body $jsonData -ContentType 'application/json' -Credential $elasticCredentials
-            }
-        }
-#>
-
-
 # Enrich Events -- This is meant to have event objects passed to it
 function Enrich-Event {
     [CmdletBinding()]
@@ -1553,27 +1068,6 @@ function Enrich-Event {
         }
     }
 }
-<# Example
-
-$BeginTime = (Get-Date).AddDays(-7)
-$EndTime = Get-Date
-
-
-$ComputerNames = 'COMPUTER1', 'COMPUTER2', 'COMPUTER3'  # Replace with actual computer names
-$Credential = Get-Credential
-
-$local_path = ($env:USERPROFILE + '\AppData\Local\Temp\XML\')
-
-Get-CriticalEventXML -EventList $EventList -BeginTime $BeginTime -EndTime $EndTime -ComputerName $ComputerNames -Credential $Credential
-
-# Merge XML files into a single file
-$allEvents = Get-ChildItem -Path $localPath -Filter "*-events.xml" | ForEach-Object {
-    Import-Clixml -Path $_.FullName
-}
-
-$allEvents | Enrich-Event
-
-#>
 
 # Function that exports event logs to an EVTX file and copies it back to your machine
 function Get-EVTX
@@ -1659,11 +1153,6 @@ Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock 
 
 }#End of Process
 }
-
-<# Example
-Get-EVTX -ComputerName $ComputerName -Credential $Credential -LogName 'Security'
-#>
-
 
 # Test if WinRM and Invoke Command will work on an array of computers
 function Test-ComputerConnection {
