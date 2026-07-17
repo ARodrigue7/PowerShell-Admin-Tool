@@ -949,8 +949,8 @@ function Get-CriticalEventXML
              } # End of Primary For Loop
     }
 
-# Enrich Events -- This is meant to have event objects passed to it
-function Enrich-Event {
+# Update Events (Enrich) -- This is meant to have event objects passed to it
+function Update-Event {
     [CmdletBinding()]
     Param (
         [Parameter(ValueFromPipeline = $true, Mandatory = $true)]
@@ -1198,7 +1198,7 @@ function Test-ComputerConnection {
 }
 
 
-function Index-Data {
+function Publish-Data {
     param (
         [Parameter(Mandatory=$true)]
         [string]$elasticURL,
@@ -1235,7 +1235,7 @@ function Index-Data {
 }
 
 # Function to create index patterns in Elastic
-function Create-IndexPattern {
+function New-IndexPattern {
     param (
         [Parameter(Mandatory=$true)]
         [string]$elasticURL,
@@ -2005,5 +2005,80 @@ function Get-DomainBaseline {
 
     End {
         Write-Output "Domain baselining run completed. All generated files are in: $OutputFolder"
+    }
+}
+
+# Retrieve (pull) a suspected file from a remote host
+function Get-RemoteArtifact {
+    <#
+    .SYNOPSIS
+        Collects a suspected file from a target computer.
+    .DESCRIPTION
+        Establishes a PSSession to the target computer and uses Copy-Item with -FromSession to pull the specified file down to the local ./artifacts directory.
+    .PARAMETER ComputerName
+        An array of target computer names. Defaults to 'localhost'.
+    .PARAMETER Credential
+        Optional PSCredential object for authentication.
+    .PARAMETER Path
+        The absolute path to the suspected file on the remote computer (e.g., 'C:\path\to\suspect.exe').
+    .PARAMETER Destination
+        The local directory where the file will be saved. Defaults to './artifacts' (relative to the current path).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromPipeline = $true)]
+        [string[]]$ComputerName = @("localhost"),
+
+        [Parameter()]
+        [System.Management.Automation.PSCredential]$Credential,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter()]
+        [string]$Destination
+    )
+
+    Begin {
+        if (!$Credential) {
+            $Credential = Get-Credential
+        }
+
+        # Default destination to ./artifacts relative to the current path
+        if ([string]::IsNullOrWhiteSpace($Destination)) {
+            $Destination = Join-Path (Get-Location) "artifacts"
+        }
+
+        # Resolve destination path to absolute path
+        $Destination = [System.IO.Path]::GetFullPath($Destination)
+        
+        # Ensure local destination directory exists
+        if (-not (Test-Path $Destination)) {
+            New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+        }
+    }
+
+    Process {
+        foreach ($computer in $ComputerName) {
+            Write-Output "Connecting to $computer to retrieve artifact: $Path..."
+            $session = $null
+            try {
+                # Establish PSSession
+                $session = New-PSSession -ComputerName $computer -Credential $Credential -ErrorAction Stop
+                
+                # Retrieve the file from remote session
+                Copy-Item -Path $Path -FromSession $session -Destination $Destination -Force -ErrorAction Stop
+                
+                Write-Output "-> Successfully retrieved artifact from $computer and saved to $Destination"
+            }
+            catch {
+                Write-Output "ERROR: Failed to retrieve artifact from $computer. Error: $($_.Exception.Message)"
+            }
+            finally {
+                if ($session) {
+                    Remove-PSSession $session -ErrorAction SilentlyContinue
+                }
+            }
+        }
     }
 }

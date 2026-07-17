@@ -68,6 +68,8 @@ $XAML_MainWindow = @"
                         <StackPanel Margin="10">
                             <Label Content="Select &amp; Run Function" FontWeight="Bold" />
                             <ComboBox Name="ScriptSelectionComboBox" DisplayMemberPath="Name" Margin="0,5,0,0" />
+                            <Label Content="Function Arguments / Path (Optional)" FontWeight="Bold" Margin="0,10,0,0" />
+                            <TextBox Name="ArgumentsTextBox" ToolTip="Enter arguments or paths for the function (e.g. C:\Windows\System32\drivers\etc\hosts)" Height="25" />
                             <Button Name="GetInfoButton" Content="Get Quick OS Info" FontWeight="Bold" Margin="0,15,0,0" Height="30" />
                             <Button Name="RunScriptButton" Content="Execute Function" FontWeight="Bold" Margin="0,10,0,0" Height="35" />
                         </StackPanel>
@@ -283,12 +285,13 @@ $ui.RunScriptButton.add_Click({
     $cred = New-PSCredentialFromUI
     $funcName = $selectedScript.Name
     $modPath = $Global:ModulePath
+    $argumentsText = $ui.ArgumentsTextBox.Text
 
     # Start the job
     $jobName = "Execute_$($funcName)_$(Get-Date -Format 'HHmmss')"
     try {
         $job = Start-Job -Name $jobName -ScriptBlock {
-            param($modulePath, $functionName, $computers, $credential)
+            param($modulePath, $functionName, $computers, $credential, $arguments)
             
             # Global overrides inside the job process BEFORE importing the module
             function global:Get-Credential { return $null }
@@ -353,9 +356,14 @@ $ui.RunScriptButton.add_Click({
                     $params['Credential'] = $credential
                 }
             }
+            if ($arguments) {
+                if ($command.Parameters.ContainsKey('Path')) {
+                    $params['Path'] = $arguments
+                }
+            }
             
             & $functionName @params
-        } -ArgumentList $modPath, $funcName, $computers, $cred
+        } -ArgumentList $modPath, $funcName, $computers, $cred, $argumentsText
 
         if ($job) {
             $Global:ActiveJobs[$job.Id] = $job
