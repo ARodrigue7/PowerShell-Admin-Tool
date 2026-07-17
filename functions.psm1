@@ -1889,6 +1889,107 @@ function Get-HostBaseline {
             Run-AndExportBaseline -Name "LocalGroupMembers" -ScriptBlock { Get-LGroupMembers -ComputerName $computer -Credential $Credential }
             Run-AndExportBaseline -Name "RegistryUserShellFolders" -ScriptBlock { Get-RegistryUserShellFolders -ComputerName $computer -Credential $Credential }
             Run-AndExportBaseline -Name "Prefetches" -ScriptBlock { Get-Prefetch -ComputerName $computer -Credential $Credential }
+        }
+    }
+
+    End {
+        Write-Output "Baselining run completed. All generated files are in: $OutputFolder"
+    }
+}
+
+# Get Domain/Server Configuration Baseline (Includes Host configuration and AD/Domain queries)
+function Get-DomainBaseline {
+    <#
+    .SYNOPSIS
+        Generates a comprehensive baseline of domain, host, and network configurations.
+    .DESCRIPTION
+        Runs all administrative, network, security, and Active Directory baseline functions against target computers and exports the results to organized CSV files.
+    .PARAMETER ComputerName
+        An array of target computer names. Defaults to 'localhost'.
+    .PARAMETER Credential
+        Optional PSCredential object for alternate authentication.
+    .PARAMETER OutputFolder
+        The directory where baseline files will be stored. Defaults to 'DomainBaselines_yyyyMMdd_HHmmss' in the current working directory.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromPipeline = $true)]
+        [string[]]$ComputerName = @("localhost"),
+
+        [Parameter()]
+        [System.Management.Automation.PSCredential]$Credential,
+
+        [Parameter()]
+        [string]$OutputFolder
+    )
+
+    Begin {
+        # Initialize the output folder
+        if ([string]::IsNullOrWhiteSpace($OutputFolder)) {
+            $timestamp = (Get-Date).ToString("yyyyMMdd_HHmmss")
+            $OutputFolder = Join-Path (Get-Location) "DomainBaselines_$timestamp"
+        }
+
+        # Resolve output path to absolute path
+        $OutputFolder = [System.IO.Path]::GetFullPath($OutputFolder)
+
+        if (-not (Test-Path $OutputFolder)) {
+            New-Item -ItemType Directory -Path $OutputFolder -Force | Out-Null
+        }
+        Write-Output "Domain baselines will be saved in: $OutputFolder"
+    }
+
+    Process {
+        foreach ($computer in $ComputerName) {
+            $compNameClean = $computer -replace '[^a-zA-Z0-9.-]', '_'
+            Write-Output "=================== Baselining Domain Target: $computer ==================="
+
+            # 1. Test Connection
+            Write-Output "Checking remote connection status using WSMan..."
+            $isReady = Test-ComputerConnection -ComputerNames $computer -Credential $Credential
+            if (-not $isReady) {
+                Write-Output "WARNING: WSMan connection test failed for target '$computer'. Skipping baselining."
+                continue
+            }
+            Write-Output "Connection verified successfully!"
+
+            # Helper function to run a baseline function, catch errors, and export to CSV
+            function Run-AndExportBaseline {
+                param(
+                    [string]$Name,
+                    [scriptblock]$ScriptBlock
+                )
+                Write-Output "Running '$Name'..."
+                try {
+                    $data = & $ScriptBlock
+                    if ($data) {
+                        $csvPath = Join-Path $OutputFolder "${Name}_${compNameClean}.csv"
+                        $data | Export-Csv -Path $csvPath -NoTypeInformation -Encoding utf8
+                        Write-Output "-> Successfully exported to: $csvPath"
+                    } else {
+                        Write-Output "-> No data returned."
+                    }
+                }
+                catch {
+                    Write-Output "WARNING: Failed to run baseline '$Name': $($_.Exception.Message)"
+                }
+            }
+
+            # 2. Run Host Network State Queries
+            Run-AndExportBaseline -Name "OSInfo" -ScriptBlock { Get-OSInfo -ComputerName $computer -Credential $Credential }
+            Run-AndExportBaseline -Name "Processes" -ScriptBlock { Get-WmiProcess -ComputerName $computer -Credential $Credential }
+            Run-AndExportBaseline -Name "Services" -ScriptBlock { Get-ServiceInfo -ComputerName $computer -Credential $Credential }
+            Run-AndExportBaseline -Name "Connections" -ScriptBlock { Get-Connection -ComputerName $computer -Credential $Credential }
+            Run-AndExportBaseline -Name "Shares" -ScriptBlock { Get-ShareInfo -ComputerName $computer -Credential $Credential }
+
+            # 3. Run Persistence & Security Auditing Queries
+            Run-AndExportBaseline -Name "RegistryRun" -ScriptBlock { Get-RegistryRun -ComputerName $computer -Credential $Credential }
+            Run-AndExportBaseline -Name "StartupFolders" -ScriptBlock { Get-StartupFolders -ComputerName $computer -Credential $Credential }
+            Run-AndExportBaseline -Name "ScheduledTasks" -ScriptBlock { Get-SchTask -ComputerName $computer -Credential $Credential }
+            Run-AndExportBaseline -Name "LogonHistory" -ScriptBlock { Get-LogOnHistory -ComputerName $computer -Credential $Credential }
+            Run-AndExportBaseline -Name "LocalGroupMembers" -ScriptBlock { Get-LGroupMembers -ComputerName $computer -Credential $Credential }
+            Run-AndExportBaseline -Name "RegistryUserShellFolders" -ScriptBlock { Get-RegistryUserShellFolders -ComputerName $computer -Credential $Credential }
+            Run-AndExportBaseline -Name "Prefetches" -ScriptBlock { Get-Prefetch -ComputerName $computer -Credential $Credential }
 
             # 4. Active Directory & Domain Queries (Gracefully handle failures if AD context is unavailable)
             Run-AndExportBaseline -Name "ADDomainController" -ScriptBlock { Get-DomainController -ComputerName $computer -Credential $Credential }
@@ -1896,10 +1997,13 @@ function Get-HostBaseline {
             Run-AndExportBaseline -Name "ADDomainGroup" -ScriptBlock { Get-DomainGroup -ComputerName $computer -Credential $Credential }
             Run-AndExportBaseline -Name "ADDomainGroupMembership" -ScriptBlock { Get-DomainGroupMembership -ComputerName $computer -Credential $Credential }
             Run-AndExportBaseline -Name "ADGPOInfo" -ScriptBlock { Get-GPOInfo -ComputerName $computer -Credential $Credential }
+            Run-AndExportBaseline -Name "ADProtectedUsers" -ScriptBlock { Get-ProtectedUsers -ComputerName $computer -Credential $Credential }
+            Run-AndExportBaseline -Name "ADServiceAccount" -ScriptBlock { Get-ServiceAccount -ComputerName $computer -Credential $Credential }
+            Run-AndExportBaseline -Name "ADEventLog" -ScriptBlock { Get-ADEventLog -ComputerName $computer -Credential $Credential }
         }
     }
 
     End {
-        Write-Output "Baselining run completed. All generated files are in: $OutputFolder"
+        Write-Output "Domain baselining run completed. All generated files are in: $OutputFolder"
     }
 }
