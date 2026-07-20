@@ -1843,6 +1843,12 @@ function Get-HostBaseline {
             $compNameClean = $computer -replace '[^a-zA-Z0-9.-]', '_'
             Write-Output "=================== Baselining Target: $computer ==================="
 
+            # Create per-computer output subfolder
+            $targetFolder = Join-Path $OutputFolder $compNameClean
+            if (-not (Test-Path $targetFolder)) {
+                New-Item -ItemType Directory -Path $targetFolder -Force | Out-Null
+            }
+
             # 1. Test Connection
             Write-Output "Checking remote connection status using WSMan..."
             $isReady = Test-ComputerConnection -ComputerNames $computer -Credential $Credential
@@ -1862,7 +1868,7 @@ function Get-HostBaseline {
                 try {
                     $data = & $ScriptBlock
                     if ($data) {
-                        $csvPath = Join-Path $OutputFolder "${Name}_${compNameClean}.csv"
+                        $csvPath = Join-Path $targetFolder "${Name}.csv"
                         $data | Export-Csv -Path $csvPath -NoTypeInformation -Encoding utf8
                         Write-Output "-> Successfully exported to: $csvPath"
                     } else {
@@ -1944,6 +1950,12 @@ function Get-DomainBaseline {
             $compNameClean = $computer -replace '[^a-zA-Z0-9.-]', '_'
             Write-Output "=================== Baselining Domain Target: $computer ==================="
 
+            # Create per-computer output subfolder
+            $targetFolder = Join-Path $OutputFolder $compNameClean
+            if (-not (Test-Path $targetFolder)) {
+                New-Item -ItemType Directory -Path $targetFolder -Force | Out-Null
+            }
+
             # 1. Test Connection
             Write-Output "Checking remote connection status using WSMan..."
             $isReady = Test-ComputerConnection -ComputerNames $computer -Credential $Credential
@@ -1963,7 +1975,7 @@ function Get-DomainBaseline {
                 try {
                     $data = & $ScriptBlock
                     if ($data) {
-                        $csvPath = Join-Path $OutputFolder "${Name}_${compNameClean}.csv"
+                        $csvPath = Join-Path $targetFolder "${Name}.csv"
                         $data | Export-Csv -Path $csvPath -NoTypeInformation -Encoding utf8
                         Write-Output "-> Successfully exported to: $csvPath"
                     } else {

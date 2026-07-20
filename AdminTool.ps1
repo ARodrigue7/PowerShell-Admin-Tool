@@ -66,6 +66,12 @@ $XAML_MainWindow = @"
                 <TabItem Header="Run Functions">
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <StackPanel Margin="10">
+                            <Label Content="Function Category / Engine" FontWeight="Bold" />
+                            <ComboBox Name="CategoryFilterComboBox" Margin="0,5,0,10">
+                                <ComboBoxItem Content="All Functions" IsSelected="True" />
+                                <ComboBoxItem Content="Modern Functions (WinRM / CIM)" />
+                                <ComboBoxItem Content="Legacy Functions (WMI / DCOM)" />
+                            </ComboBox>
                             <Label Content="Select &amp; Run Function" FontWeight="Bold" />
                             <ComboBox Name="ScriptSelectionComboBox" DisplayMemberPath="Name" Margin="0,5,0,0" />
                             <Label Content="Function Arguments / Path (Optional)" FontWeight="Bold" Margin="0,10,0,0" />
@@ -167,6 +173,7 @@ function New-PSCredentialFromUI {
 #region Initialization
 if ($PSScriptRoot) { $ScriptPath = $PSScriptRoot } else { $ScriptPath = Get-Location }
 $Global:ModulePath = Join-Path $ScriptPath "functions.psm1"
+$Global:LegacyModulePath = Join-Path $ScriptPath "legacy-functions.psm1"
 
 try {
     [xml]$xaml = $XAML_MainWindow
@@ -180,6 +187,26 @@ try {
     return
 }
 #endregion
+
+function Update-FilteredFunctions {
+    $selectedCategory = if ($ui.CategoryFilterComboBox.SelectedItem) { $ui.CategoryFilterComboBox.SelectedItem.Content } else { "All Functions" }
+    $funcs = @()
+    
+    if ($selectedCategory -eq "Modern Functions (WinRM / CIM)") {
+        $funcs = @(Get-Command -Module functions -CommandType Function -ErrorAction SilentlyContinue | Sort-Object Name)
+    } elseif ($selectedCategory -eq "Legacy Functions (WMI / DCOM)") {
+        $funcs = @(Get-Command -Module legacy-functions -CommandType Function -ErrorAction SilentlyContinue | Sort-Object Name)
+    } else {
+        $funcs = @(Get-Command -Module functions, legacy-functions -CommandType Function -ErrorAction SilentlyContinue | Sort-Object Name)
+    }
+    
+    $ui.ScriptSelectionComboBox.ItemsSource = $funcs
+    if ($funcs -and $funcs.Count -gt 0) {
+        $ui.ScriptSelectionComboBox.SelectedIndex = 0
+    } else {
+        $ui.ScriptSelectionComboBox.ItemsSource = $null
+    }
+}
 
 #region Event Handlers
 $ui.ImportFromFileButton.add_Click({
@@ -197,6 +224,7 @@ $ui.ImportFromFileButton.add_Click({
 
 $ui.ComputerInputTextBox.add_TextChanged({ Update-ComputerListView })
 $ui.ScriptSelectionComboBox.add_SelectionChanged({ Update-ScriptDescriptionView })
+$ui.CategoryFilterComboBox.add_SelectionChanged({ Update-FilteredFunctions })
 
 $ui.GetInfoButton.add_Click({
     $Global:LastJobResults = $null
@@ -339,12 +367,14 @@ $ui.RunScriptButton.add_Click({
                 return $results
             }
             
-            # Import module (which now resolves to our global overrides)
-            Import-Module $modulePath -Force
+            # Import modules (which now resolves to our global overrides)
+            if (Test-Path $modulePath) { Import-Module $modulePath -Force }
+            $legacyModPath = Join-Path (Split-Path $modulePath) "legacy-functions.psm1"
+            if (Test-Path $legacyModPath) { Import-Module $legacyModPath -Force }
             
             $command = Get-Command -Name $functionName -ErrorAction SilentlyContinue
             if (-not $command) {
-                throw "Function '$functionName' not found in module '$modulePath'."
+                throw "Function '$functionName' not found in loaded modules."
             }
             
             $params = @{}
@@ -482,21 +512,19 @@ $timer.Start()
 
 #region Start App
 try {
-    if (-not (Test-Path $Global:ModulePath)) {
-        Add-OutputLine -Text "ERROR: functions.psm1 not found at path: $Global:ModulePath" -Color "Red"
-    } else {
-        Add-OutputLine -Text "Loading functions from module '$Global:ModulePath'..." -Color "Blue"
+    if (Test-Path $Global:ModulePath) {
+        Add-OutputLine -Text "Loading modern functions from '$Global:ModulePath'..." -Color "Blue"
         Import-Module $Global:ModulePath -Force
-        
-        $funcs = Get-Command -Module functions -CommandType Function | Sort-Object Name
-        if ($funcs) {
-            $ui.ScriptSelectionComboBox.ItemsSource = $funcs
-            $ui.ScriptSelectionComboBox.SelectedIndex = 0
-            Add-OutputLine -Text "Loaded $($funcs.Count) functions from module." -Color "Green"
-        } else {
-            Add-OutputLine -Text "No functions found in module functions." -Color "Orange"
-        }
+    } else {
+        Add-OutputLine -Text "WARNING: functions.psm1 not found at path: $Global:ModulePath" -Color "Orange"
     }
+
+    if (Test-Path $Global:LegacyModulePath) {
+        Add-OutputLine -Text "Loading legacy functions from '$Global:LegacyModulePath'..." -Color "Blue"
+        Import-Module $Global:LegacyModulePath -Force
+    }
+
+    Update-FilteredFunctions
 
     $ui.ComputerInputTextBox.Text = $env:COMPUTERNAME
     Update-ComputerListView
