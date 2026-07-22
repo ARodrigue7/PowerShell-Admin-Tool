@@ -1,12 +1,14 @@
 <#
 .SYNOPSIS
-    PowerShell Remote Admin Tool (Module-Based)
+    PowerShell Remote Admin Tool (Module-Based Graphical Interface)
 .DESCRIPTION
-    A graphical tool for remote execution of PowerShell functions loaded dynamically from a local module.
-    Runs tasks asynchronously in background processes using Start-Job.
+    A comprehensive WPF graphical user interface for executing remote administrative,
+    security auditing, and baselining functions loaded dynamically from functions.psm1.
+    Runs administrative tasks asynchronously using background jobs monitored by a
+    real-time DispatcherTimer.
 .NOTES
-    Author: Gemini Enterprise & ChatGPT (Consolidated)
-    Version: 6.0 Module Pivot
+    Module Architecture: Consolidated functions.psm1 with WMI/CIM fallback capability
+    Target Support: Windows PowerShell 5.1+, Windows Server 2008 R2 through Server 2022
 #>
 
 #region XAML Data

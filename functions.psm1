@@ -1,5 +1,7 @@
-#----------------------------- PROCESSES-------------------------------
-function Get-WmiProcess {
+#-------------------------------------------------------------------------------
+# PROCESSES
+#-------------------------------------------------------------------------------
+function Get-ProcessInfo {
     [CmdletBinding()]
     Param (
         [Parameter(ValueFromPipeline = $true)]
@@ -85,9 +87,12 @@ function Get-WmiProcess {
         $processes
     }
 }
+Set-Alias -Name Get-WmiProcess -Value Get-ProcessInfo
 
 
-#------------------------------------- SERVICES---------------------------------------------------
+#-------------------------------------------------------------------------------
+# SERVICES
+#-------------------------------------------------------------------------------
 function Get-ServiceInfo
 {
     [cmdletbinding()]
@@ -158,7 +163,9 @@ function Get-ServiceInfo
 } 
 
 
-#------------------------------------------- CONNECTIONS-------------------------------------------------
+#-------------------------------------------------------------------------------
+# CONNECTIONS
+#-------------------------------------------------------------------------------
 function Get-Connection {
     [CmdletBinding()]
     Param (
@@ -257,7 +264,9 @@ function Get-Connection {
 }
 
 
-# Scheduled Tasks
+#-------------------------------------------------------------------------------
+# SCHEDULED TASKS
+#-------------------------------------------------------------------------------
 function Get-SchTask
 {
     [cmdletbinding()]
@@ -331,9 +340,9 @@ function Get-SchTask
         $tasks
     }    
 }
-
-
-# Prefetch
+#-------------------------------------------------------------------------------
+# PREFETCH
+#-------------------------------------------------------------------------------
 function Get-Prefetch 
 {
     [cmdletbinding()]
@@ -383,7 +392,9 @@ function Get-Prefetch
     }
 }
 
-# OS Information
+#-------------------------------------------------------------------------------
+# OS INFORMATION
+#-------------------------------------------------------------------------------
 function Get-OSInfo 
 {
     [cmdletbinding()]
@@ -432,7 +443,9 @@ function Get-OSInfo
     }
 }
 
-# Registry Run Keys
+#-------------------------------------------------------------------------------
+# REGISTRY RUN KEYS
+#-------------------------------------------------------------------------------
 function Get-RegistryRun
 {
     [CmdletBinding()]
@@ -547,7 +560,9 @@ function Get-RegistryUserShellFolders {
 
 
 
-# Startup Folders
+#-------------------------------------------------------------------------------
+# STARTUP FOLDERS
+#-------------------------------------------------------------------------------
 function Get-StartupFolders
 {
     [CmdletBinding()]
@@ -616,7 +631,9 @@ function Get-StartupFolders
     }
 }
 
-# Local Users
+#-------------------------------------------------------------------------------
+# LOCAL USERS
+#-------------------------------------------------------------------------------
 function Get-LUser
 {
     [CmdletBinding()]
@@ -676,7 +693,9 @@ function Get-LUser
     }
 }
 
-# Local Groups
+#-------------------------------------------------------------------------------
+# LOCAL GROUPS
+#-------------------------------------------------------------------------------
 function Get-LGroup
 {
     [CmdletBinding()]
@@ -725,7 +744,9 @@ function Get-LGroup
     }
 }
 
-# Local Group Members
+#-------------------------------------------------------------------------------
+# LOCAL GROUP MEMBERS
+#-------------------------------------------------------------------------------
 function Get-LGroupMembers
 {
     [cmdletbinding()]
@@ -797,7 +818,9 @@ function Get-LGroupMembers
     }
 }
 
-# Shares
+#-------------------------------------------------------------------------------
+# SHARES
+#-------------------------------------------------------------------------------
 function Get-ShareInfo
 {
     [CmdletBinding()]
@@ -844,7 +867,9 @@ function Get-ShareInfo
     }    
 }
 
-# Logon History
+#-------------------------------------------------------------------------------
+# LOGON HISTORY
+#-------------------------------------------------------------------------------
 function Get-LogOnHistory
 {
     [cmdletbinding()]
@@ -934,7 +959,9 @@ function Get-LogOnHistory
 
 
 
-# Exports Event Log
+#-------------------------------------------------------------------------------
+# EVENT LOGS & UTILITIES
+#-------------------------------------------------------------------------------
 
 function Get-CriticalEventXML
 { 
@@ -1461,7 +1488,9 @@ function Remove-Spaces {
     }
 }
 
-#-----------------------------INVENTORY DOMAIN CONTROLLERS--------------------------------------------------
+#-------------------------------------------------------------------------------
+# ACTIVE DIRECTORY & DOMAIN
+#-------------------------------------------------------------------------------
 function Get-DomainController {
     [CmdletBinding()]
     Param (
@@ -1501,7 +1530,6 @@ function Get-DomainController {
     }
 }
 
-#-------------------------------PROTECTED GROUP MEMBERS--------------------------------------------------------------------
 function Get-ProtectedUsers {
     [CmdletBinding()]
     Param (
@@ -1557,7 +1585,6 @@ function Get-ProtectedUsers {
 }
 
 
-#-------------------AD USERS----------------------------------------------
 function Get-DomainUser {
     [CmdletBinding()]
     Param (
@@ -1633,7 +1660,6 @@ function Get-DomainUser {
     
 }
 
-#-------------------------AD GROUPS------------------------------------------
 function Get-DomainGroup {
     [CmdletBinding()]
     Param (
@@ -1753,8 +1779,8 @@ function Get-DomainGroupMembership {
     }
 }
 
+#----------------------------SERVICE ACCOUNTS-----------------------------------
 
-#------------------------------SERVICE ACCOUNTS----------------------------
 function Get-ServiceAccount {
     [CmdletBinding()]
     Param (
@@ -1814,7 +1840,7 @@ function Get-ServiceAccount {
 }
 
 
-#------------------------GROUP POLICY-----------------------------------------
+#----------------------------GROUP POLICY-------------------------------------
 
 function Get-GPOInfo {
     [CmdletBinding()]
@@ -1868,7 +1894,7 @@ function Get-GPOInfo {
 
 
 
-#-----------------------EVENT LOGS-------------------------------------------
+#----------------------------AD EVENT LOGS------------------------------------
 
 function Get-ADEventLog {
     [CmdletBinding()]
@@ -1951,6 +1977,10 @@ function Get-ADEventLog {
     }
 }
 
+#-------------------------------------------------------------------------------
+# BASELINING & ARTIFACT COLLECTION
+#-------------------------------------------------------------------------------
+
 # Private helper: run a baseline function, catch errors, and export to CSV
 function Invoke-BaselineExport {
     param(
@@ -2032,7 +2062,7 @@ function Get-HostBaseline {
 
             # Host Network State Queries
             Invoke-BaselineExport -Name "OSInfo" -TargetFolder $targetFolder -ScriptBlock { Get-OSInfo -ComputerName $computer -Credential $Credential }
-            Invoke-BaselineExport -Name "Processes" -TargetFolder $targetFolder -ScriptBlock { Get-WmiProcess -ComputerName $computer -Credential $Credential }
+            Invoke-BaselineExport -Name "Processes" -TargetFolder $targetFolder -ScriptBlock { Get-ProcessInfo -ComputerName $computer -Credential $Credential }
             Invoke-BaselineExport -Name "Services" -TargetFolder $targetFolder -ScriptBlock { Get-ServiceInfo -ComputerName $computer -Credential $Credential }
             Invoke-BaselineExport -Name "Connections" -TargetFolder $targetFolder -ScriptBlock { Get-Connection -ComputerName $computer -Credential $Credential }
             Invoke-BaselineExport -Name "Shares" -TargetFolder $targetFolder -ScriptBlock { Get-ShareInfo -ComputerName $computer -Credential $Credential }
