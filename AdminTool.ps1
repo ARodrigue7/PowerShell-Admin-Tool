@@ -101,6 +101,7 @@ $XAML_MainWindow = @"
                 <Button Name="ClearConsoleButton" Content="Clear Console" Width="100" Margin="0,0,0,5" />
                 <Button Name="CancelJobsButton" Content="Cancel Jobs" Width="100" Margin="0,0,0,5" />
                 <Button Name="ExportResultsButton" Content="Export Results..." Width="100" />
+            </StackPanel>
         </Grid>
         <StatusBar Grid.Row="3" Margin="0,5,0,0" Background="#F0F0F0">
             <StatusBarItem>
