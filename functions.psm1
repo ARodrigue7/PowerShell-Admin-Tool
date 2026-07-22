@@ -212,23 +212,42 @@ function Get-Connection {
                     }
                 }
             } else {
-                Get-WmiObject Win32_NetworkConnection -ErrorAction SilentlyContinue | ForEach-Object {
-                    [PSCustomObject]@{
-                        PSComputerName   = $_.PSComputerName
-                        CSName           = $env:COMPUTERNAME
-                        LocalAddress     = $_.LocalName
-                        LocalPort        = $null
-                        RemoteAddress    = $_.RemoteName
-                        RemotePort       = $null
-                        State            = $_.ConnectionState
-                        OwningProcess    = $null
-                        ProcessName      = $null
-                        ProcessID        = $null
-                        ParentProcessID  = $null
-                        ParentProcess    = $null
-                        CreationTime     = $null
-                        Time             = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
-                        UTCTime          = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                $netstatOutput = netstat -ano 2>$null
+                $processMap = @{}
+                foreach ($p in $processes) { $processMap[$p.ProcessID] = $p }
+
+                foreach ($line in $netstatOutput) {
+                    if ($line -match '^\s*(TCP|UDP)\s+([^\s:]+):(\d+)\s+([^\s:]+):(\d+)\s+(\S+)\s+(\d+)') {
+                        $localAddr = $matches[2]
+                        $localPort = $matches[3]
+                        $remoteAddr = $matches[4]
+                        $remotePort = $matches[5]
+                        $state = $matches[6]
+                        $pidVal = [uint32]$matches[7]
+
+                        $proc = $processMap[$pidVal]
+                        $parentProc = $null
+                        if ($proc -and $proc.ParentProcessID) {
+                            $parentProc = $processMap[[uint32]$proc.ParentProcessID]
+                        }
+
+                        [PSCustomObject]@{
+                            PSComputerName   = $env:COMPUTERNAME
+                            CSName           = $env:COMPUTERNAME
+                            LocalAddress     = $localAddr
+                            LocalPort        = $localPort
+                            RemoteAddress    = $remoteAddr
+                            RemotePort       = $remotePort
+                            State            = $state
+                            OwningProcess    = $pidVal
+                            ProcessName      = if ($proc) { $proc.Name } else { $null }
+                            ProcessID        = $pidVal
+                            ParentProcessID  = if ($parentProc) { $parentProc.ProcessID } else { $null }
+                            ParentProcess    = if ($parentProc) { $parentProc.Name } else { $null }
+                            CreationTime     = $null
+                            Time             = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                            UTCTime          = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                        }
                     }
                 }
             }

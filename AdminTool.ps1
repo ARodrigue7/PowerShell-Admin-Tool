@@ -21,6 +21,7 @@ $XAML_MainWindow = @"
             <RowDefinition Height="*" />
             <RowDefinition Height="5" />
             <RowDefinition Height="250" MinHeight="100" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
         <Grid Grid.Row="0">
             <Grid.ColumnDefinitions>
@@ -98,8 +99,15 @@ $XAML_MainWindow = @"
                 <Button Name="ClearConsoleButton" Content="Clear Console" Width="100" Margin="0,0,0,5" />
                 <Button Name="CancelJobsButton" Content="Cancel Jobs" Width="100" Margin="0,0,0,5" />
                 <Button Name="ExportResultsButton" Content="Export Results..." Width="100" />
-            </StackPanel>
         </Grid>
+        <StatusBar Grid.Row="3" Margin="0,5,0,0" Background="#F0F0F0">
+            <StatusBarItem>
+                <TextBlock Name="JobStatusTextBlock" Text="Ready" FontWeight="SemiBold" Margin="5,2" />
+            </StatusBarItem>
+            <StatusBarItem HorizontalAlignment="Right">
+                <ProgressBar Name="JobProgressBar" Width="150" Height="14" IsIndeterminate="False" Visibility="Collapsed" Margin="5,2" />
+            </StatusBarItem>
+        </StatusBar>
     </Grid>
 </Window>
 "@
@@ -474,6 +482,22 @@ $timer.Add_Tick({
             } else {
                 Add-OutputLine -Text "  (Job completed with no output.)" -Color "Gray"
             }
+        }
+    }
+
+    # Update GUI status bar & progress bar
+    $activeCount = $Global:ActiveJobs.Count
+    if ($activeCount -gt 0) {
+        if ($ui.JobStatusTextBlock) { $ui.JobStatusTextBlock.Text = "Running ($activeCount) active job(s)..." }
+        if ($ui.JobProgressBar) {
+            $ui.JobProgressBar.Visibility = [System.Windows.Visibility]::Visible
+            $ui.JobProgressBar.IsIndeterminate = $true
+        }
+    } else {
+        if ($ui.JobStatusTextBlock) { $ui.JobStatusTextBlock.Text = "Ready" }
+        if ($ui.JobProgressBar) {
+            $ui.JobProgressBar.Visibility = [System.Windows.Visibility]::Collapsed
+            $ui.JobProgressBar.IsIndeterminate = $false
         }
     }
 })
