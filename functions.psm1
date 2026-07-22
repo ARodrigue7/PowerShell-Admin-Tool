@@ -18,7 +18,12 @@ function Get-WmiProcess {
 
     Process {
         $processes = Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {
-            $processes = Get-CimInstance -ClassName Win32_Process
+            $useCim = [bool](Get-Command Get-CimInstance -ErrorAction SilentlyContinue)
+            $processes = if ($useCim) {
+                Get-CimInstance -ClassName Win32_Process
+            } else {
+                Get-WmiObject -Class Win32_Process
+            }
             $processLookup = @{}
 
             # Create a lookup table for process IDs and names
@@ -36,8 +41,12 @@ function Get-WmiProcess {
                 $grandparentProcessID = $null
 
                 if ($parentProcessName) {
-                    $grandparentProcessID = (Get-CimInstance -ClassName Win32_Process -Filter "ProcessID = $parentProcessID" |
-                        Select-Object -ExpandProperty ParentProcessID) -as [uint32]
+                    $grandparentProcObj = if ($useCim) {
+                        Get-CimInstance -ClassName Win32_Process -Filter "ProcessID = $parentProcessID"
+                    } else {
+                        Get-WmiObject -Class Win32_Process -Filter "ProcessID = $parentProcessID"
+                    }
+                    $grandparentProcessID = ($grandparentProcObj | Select-Object -ExpandProperty ParentProcessID) -as [uint32]
 
                     if ($grandparentProcessID -ne 0) {
                         $grandparentProcessName = $processLookup[$grandparentProcessID] -as [string]
@@ -98,11 +107,22 @@ function Get-ServiceInfo
     Process
     {
         $services = Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {
-            $allProcesses = Get-CimInstance -ClassName Win32_Process
+            $useCim = [bool](Get-Command Get-CimInstance -ErrorAction SilentlyContinue)
+            $allProcesses = if ($useCim) {
+                Get-CimInstance -ClassName Win32_Process
+            } else {
+                Get-WmiObject -Class Win32_Process
+            }
             $processMap = @{}
             foreach ($p in $allProcesses) { $processMap[$p.ProcessId] = $p }
 
-            Get-CimInstance -Class Win32_Service | ForEach-Object {
+            $serviceList = if ($useCim) {
+                Get-CimInstance -Class Win32_Service
+            } else {
+                Get-WmiObject -Class Win32_Service
+            }
+
+            $serviceList | ForEach-Object {
                 $proc = $null
                 if ($_.ProcessId -and $processMap.ContainsKey($_.ProcessId)) {
                     $proc = $processMap[$_.ProcessId]
@@ -158,31 +178,58 @@ function Get-Connection {
 
     Process {
         $connections = Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {
-            $processes = Get-CimInstance Win32_Process
-            $connections = Get-NetTCPConnection -State Established
+            $useCim = [bool](Get-Command Get-CimInstance -ErrorAction SilentlyContinue)
+            $processes = if ($useCim) {
+                Get-CimInstance Win32_Process
+            } else {
+                Get-WmiObject Win32_Process
+            }
 
-            $connections | ForEach-Object {
-                $connection = $_
-                $process = $processes | Where-Object { $_.ProcessID -eq $connection.OwningProcess }
-                $parentProcessID = $process.ParentProcessID
-                $parentProcess = $processes | Where-Object { $_.ProcessID -eq $parentProcessID }
+            if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
+                $connections = Get-NetTCPConnection -State Established
+                $connections | ForEach-Object {
+                    $connection = $_
+                    $process = $processes | Where-Object { $_.ProcessID -eq $connection.OwningProcess }
+                    $parentProcessID = $process.ParentProcessID
+                    $parentProcess = $processes | Where-Object { $_.ProcessID -eq $parentProcessID }
 
-                [PSCustomObject]@{
-                    PSComputerName   = $connection.PSComputerName
-                    CSName           = $process.CSName
-                    LocalAddress     = $connection.LocalAddress
-                    LocalPort        = $connection.LocalPort
-                    RemoteAddress    = $connection.RemoteAddress
-                    RemotePort       = $connection.RemotePort
-                    State            = $connection.State
-                    OwningProcess    = $connection.OwningProcess
-                    ProcessName      = $process.Name
-                    ProcessID        = $process.ProcessId
-                    ParentProcessID  = $parentProcess.ProcessID
-                    ParentProcess    = $parentProcess.Name
-                    CreationTime     = $connection.CreationTime
-                    Time             = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
-                    UTCTime          = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                    [PSCustomObject]@{
+                        PSComputerName   = $connection.PSComputerName
+                        CSName           = $process.CSName
+                        LocalAddress     = $connection.LocalAddress
+                        LocalPort        = $connection.LocalPort
+                        RemoteAddress    = $connection.RemoteAddress
+                        RemotePort       = $connection.RemotePort
+                        State            = $connection.State
+                        OwningProcess    = $connection.OwningProcess
+                        ProcessName      = $process.Name
+                        ProcessID        = $process.ProcessId
+                        ParentProcessID  = $parentProcess.ProcessID
+                        ParentProcess    = $parentProcess.Name
+                        CreationTime     = $connection.CreationTime
+                        Time             = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                        UTCTime          = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                    }
+                }
+            } else {
+                Get-WmiObject Win32_NetworkConnection -ErrorAction SilentlyContinue | ForEach-Object {
+                    [PSCustomObject]@{
+                        PSComputerName   = $_.PSComputerName
+                        CSName           = $env:COMPUTERNAME
+                        LocalAddress     = $_.LocalName
+                        LocalPort        = $null
+                        RemoteAddress    = $_.RemoteName
+                        RemotePort       = $null
+                        State            = $_.ConnectionState
+                        OwningProcess    = $null
+                        ProcessName      = $null
+                        ProcessID        = $null
+                        ParentProcessID  = $null
+                        ParentProcess    = $null
+                        CreationTime     = $null
+                        Time             = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                        UTCTime          = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                    }
                 }
             }
         }
@@ -211,30 +258,55 @@ function Get-SchTask
     Process
     {
         $tasks = Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock { 
-            $schtasks = (Get-ScheduledTask)
-            $taskInfoList = @()
+            if (Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue) {
+                $schtasks = (Get-ScheduledTask)
+                $taskInfoList = @()
 
-            foreach ($task in $schtasks)
-            {
-                $taskinfo = Get-ScheduledTaskInfo -TaskPath $task.TaskPath -TaskName $task.TaskName
-                $taskInfoList += [PSCustomObject]@{
-                    CSName          = $env:COMPUTERNAME
-                    PSComputerName  = $task.PSComputerName
-                    TaskName        = $task.TaskName
-                    Author          = $task.Author
-                    Date            = $task.Date
-                    URI             = $task.URI
-                    State           = $task.State
-                    TaskPath        = $task.TaskPath
-                    LastRunTime     = $taskinfo.LastRunTime
-                    LastRunTimeUTC  = ($taskinfo.LastRunTime).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
-                    LastTaskResult  = $taskinfo.LastTaskResult
-                    NextRunTime     = $taskinfo.NextRunTime
-                    Time            = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
-                    UTCTime         = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                foreach ($task in $schtasks)
+                {
+                    $taskinfo = Get-ScheduledTaskInfo -TaskPath $task.TaskPath -TaskName $task.TaskName -ErrorAction SilentlyContinue
+                    $lastRunUtc = if ($taskinfo -and $taskinfo.LastRunTime) {
+                        try { ($taskinfo.LastRunTime).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffK') } catch { $null }
+                    } else { $null }
+
+                    $taskInfoList += [PSCustomObject]@{
+                        CSName          = $env:COMPUTERNAME
+                        PSComputerName  = $task.PSComputerName
+                        TaskName        = $task.TaskName
+                        Author          = $task.Author
+                        Date            = $task.Date
+                        URI             = $task.URI
+                        State           = $task.State
+                        TaskPath        = $task.TaskPath
+                        LastRunTime     = if ($taskinfo) { $taskinfo.LastRunTime } else { $null }
+                        LastRunTimeUTC  = $lastRunUtc
+                        LastTaskResult  = if ($taskinfo) { $taskinfo.LastTaskResult } else { $null }
+                        NextRunTime     = if ($taskinfo) { $taskinfo.NextRunTime } else { $null }
+                        Time            = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                        UTCTime         = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                    }
+                }
+                $taskInfoList
+            } else {
+                Get-WmiObject Win32_ScheduledJob -ErrorAction SilentlyContinue | ForEach-Object {
+                    [PSCustomObject]@{
+                        CSName          = $env:COMPUTERNAME
+                        PSComputerName  = $_.PSComputerName
+                        TaskName        = $_.Name
+                        Author          = $null
+                        Date            = $null
+                        URI             = $null
+                        State           = $_.Status
+                        TaskPath        = $_.Command
+                        LastRunTime     = $_.StartTime
+                        LastRunTimeUTC  = $null
+                        LastTaskResult  = $_.JobId
+                        NextRunTime     = $null
+                        Time            = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                        UTCTime         = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                    }
                 }
             }
-            $taskInfoList
         }
 
         $tasks
@@ -311,20 +383,29 @@ function Get-OSInfo
     }
     Process
     {
-        $osInfo = Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {Get-CimInstance -ClassName Win32_OperatingSystem}
+        $osInfo = Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {
+            if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
+                Get-CimInstance -ClassName Win32_OperatingSystem
+            } else {
+                Get-WmiObject -Class Win32_OperatingSystem
+            }
+        }
 
         $osData = $osInfo | ForEach-Object {
+            $installDt = if ($_.InstallDate -is [DateTime]) { $_.InstallDate.ToString('yyyy-MM-ddTHH:mm:ss.fffffffK') } elseif ($_.InstallDate) { [Management.ManagementDateTimeConverter]::ToDateTime($_.InstallDate).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK') } else { $null }
+            $lastBootDt = if ($_.LastBootUpTime -is [DateTime]) { $_.LastBootUpTime.ToString('yyyy-MM-ddTHH:mm:ss.fffffffK') } elseif ($_.LastBootUpTime) { [Management.ManagementDateTimeConverter]::ToDateTime($_.LastBootUpTime).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK') } else { $null }
+
             [PSCustomObject]@{
                 "CSName"                 = $_.CSName
                 "OperatingSystem"        = $_.Caption
                 "OperatingSystemVersion" = $_.Version
                 "Manufacturer"           = $_.Manufacturer
                 "RegisteredOwner"        = $_.RegisteredUser
-                "InstallDate"            = $_.InstallDate.ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
-                "LastBootTime"           = $_.LastBootUpTime.ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                "InstallDate"            = $installDt
+                "LastBootTime"           = $lastBootDt
                 "SerialNumber"           = $_.SerialNumber
                 "Time"                   = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
-                "UTCTime"                = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'")
+                "UTCTime"                = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
             }
         }
 
@@ -384,7 +465,7 @@ function Get-RegistryRun
                                 $processName = [io.path]::GetFileNameWithoutExtension($valueData)
                             }
                             
-                            $keyName | Select-Object -Property @{Name = 'KeyName'; Expression = {$_}}, @{Name = 'Details'; Expression = {$valueData}}, @{Name = 'ProcessName'; Expression = {$processName}}, @{Name = 'Time'; Expression = {(Get-Date).ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'")}}
+                            $keyName | Select-Object -Property @{Name = 'KeyName'; Expression = {$_}}, @{Name = 'Details'; Expression = {$valueData}}, @{Name = 'ProcessName'; Expression = {$processName}}, @{Name = 'Time'; Expression = {(Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')}}
                         }
                     }
                 }
@@ -432,7 +513,7 @@ function Get-RegistryUserShellFolders {
                             Key         = $keyName
                             ValueName   = $valueName
                             ValueData   = $valueData
-                            Time        = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'")
+                            Time        = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
                         }
                     }
                 }
@@ -447,7 +528,6 @@ function Get-RegistryUserShellFolders {
 
 
 
-# Startup Folders
 # Startup Folders
 function Get-StartupFolders
 {
@@ -501,9 +581,9 @@ function Get-StartupFolders
                                 FileInfoName             = $fileInfo.Name
                                 FileInfoSize             = $fileInfo.Length
                                 LastWriteTime            = $fileInfo.LastWriteTime.ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
-                                LastWriteTimeUTC         = $fileInfo.LastWriteTime.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'")
+                                LastWriteTimeUTC         = $fileInfo.LastWriteTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
                                 Time                     = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
-                                UTCTime                  = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'")
+                                UTCTime                  = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
                                 Hash                     = (Get-FileHash -Path $file.FullName -Algorithm SHA1).Hash
 
                             }
@@ -541,7 +621,14 @@ function Get-LUser
     Process
     {
         $usersData = Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {
-            Get-CimInstance -ClassName Win32_UserAccount -Filter "LocalAccount='True'" | ForEach-Object {
+            $useCim = [bool](Get-Command Get-CimInstance -ErrorAction SilentlyContinue)
+            $userList = if ($useCim) {
+                Get-CimInstance -ClassName Win32_UserAccount -Filter "LocalAccount = True"
+            } else {
+                Get-WmiObject -Class Win32_UserAccount -Filter "LocalAccount = True"
+            }
+
+            $userList | ForEach-Object {
                 [PSCustomObject]@{
                     "CSName"                      = $env:COMPUTERNAME
                     "LocalUserName"               = $_.Name
@@ -560,8 +647,8 @@ function Get-LUser
                     "LocalUserSIDType"            = $_.SIDType
                     "LocalUserFullName"           = $_.FullName
                     "LocalUserAccountExpires"     = $_.AccountExpires
-                    "Time"                        = (Get-Date).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'")
-                    "UTCTime"                     = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'")
+                    "Time"                        = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                    "UTCTime"                     = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
                 }
             }
         }
@@ -594,20 +681,26 @@ function Get-LGroup
     Process
     {
         Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {
-            Get-CimInstance -ClassName Win32_Group
-        } | ForEach-Object {
-            [PSCustomObject]@{
-                "CSName"                 = $env:COMPUTERNAME
-                "LocalGroupName"         = $_.Name
-                "LocalGroupSID"          = $_.SID
-                "LocalGroupDomain"       = $_.Domain
-                "LocalGroupCaption"      = $_.Caption
-                "LocalGroupDescription"  = $_.Description
-                "LocalGroupLocalAccount" = $_.LocalAccount
-                "LocalGroupSIDType"      = $_.SIDType
-                "Time"                   = (Get-Date).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'")
-                "UTCTime"                = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'")
+            $useCim = [bool](Get-Command Get-CimInstance -ErrorAction SilentlyContinue)
+            $groupList = if ($useCim) {
+                Get-CimInstance -ClassName Win32_Group -Filter "LocalAccount = True"
+            } else {
+                Get-WmiObject -Class Win32_Group -Filter "LocalAccount = True"
+            }
 
+            $groupList | ForEach-Object {
+                [PSCustomObject]@{
+                    "CSName"                 = $env:COMPUTERNAME
+                    "LocalGroupName"         = $_.Name
+                    "LocalGroupSID"          = $_.SID
+                    "LocalGroupDomain"       = $_.Domain
+                    "LocalGroupCaption"      = $_.Caption
+                    "LocalGroupDescription"  = $_.Description
+                    "LocalGroupLocalAccount" = $_.LocalAccount
+                    "LocalGroupSIDType"      = $_.SIDType
+                    "Time"                   = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                    "UTCTime"                = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                }
             }
         }
     }
@@ -635,38 +728,54 @@ function Get-LGroupMembers
     Process
     {
         Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {
-            try
-            {
-                foreach ($name in (Get-CimInstance -ClassName Win32_Group).Name) {
-                    [PSCustomObject]@{
-                        CSName    = $env:COMPUTERNAME
-                        GroupName = $name 
-                        Member    = (Get-LocalGroupMember $name)
-                        Time      = (Get-Date).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'") 
-                        UTCTime   = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'")   
-                                                        
+            $useCim = [bool](Get-Command Get-CimInstance -ErrorAction SilentlyContinue)
+            $localGroups = if ($useCim) {
+                Get-CimInstance -ClassName Win32_Group -Filter "LocalAccount = True"
+            } else {
+                Get-WmiObject -Class Win32_Group -Filter "LocalAccount = True"
+            }
+
+            foreach ($group in $localGroups) {
+                $name = $group.Name
+                $members = $null
+
+                if (Get-Command Get-LocalGroupMember -ErrorAction SilentlyContinue) {
+                    try {
+                        $mObjs = Get-LocalGroupMember -Group $name -ErrorAction Stop
+                        $members = ($mObjs | ForEach-Object { $_.Name }) -join ', '
+                    } catch {
+                        $members = $null
                     }
                 }
-            }
-            catch
-            {
-                $groupUsers = Get-CimInstance -ClassName Win32_GroupUser
-                foreach ($name in (Get-CimInstance -ClassName Win32_Group).Name) {
-                    [PSCustomObject]@{
-                        CSName    = $env:COMPUTERNAME
-                        GroupName = $name 
-                        Member    = $groupUsers | Where-Object {$_.GroupComponent.Name -eq $name} | ForEach-Object {  
-                            if ($_.PartComponent) {
+
+                if (-not $members) {
+                    $groupUsers = if ($useCim) {
+                        Get-CimInstance -ClassName Win32_GroupUser
+                    } else {
+                        Get-WmiObject -Class Win32_GroupUser
+                    }
+                    $mList = $groupUsers | Where-Object { $_.GroupComponent -like "*Name=`"$name`"*" -or $_.GroupComponent.Name -eq $name } | ForEach-Object {
+                        if ($_.PartComponent) {
+                            if ($_.PartComponent.Domain -and $_.PartComponent.Name) {
                                 "$($_.PartComponent.Domain)\$($_.PartComponent.Name)"
+                            } else {
+                                "$($_.PartComponent)"
                             }
                         }
-                        Time      = (Get-Date).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'") 
-                        UTCTime   = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'")    
                     }
+                    $members = ($mList | Where-Object { $_ }) -join ', '
+                }
+
+                [PSCustomObject]@{
+                    CSName    = $env:COMPUTERNAME
+                    GroupName = $name 
+                    Member    = $members
+                    Time      = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK') 
+                    UTCTime   = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')   
                 }
             }
         }
-    } 
+    }
 }
 
 # Shares
@@ -693,10 +802,24 @@ function Get-ShareInfo
     Process
     {
         Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {
-            foreach ($share in (Get-SmbShare).Name) {
-                $accessInfo = Get-SmbShareAccess $share
-                $accessInfo | Add-Member -NotePropertyName "Time" -NotePropertyValue (Get-Date).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'")
-                $accessInfo
+            if (Get-Command Get-SmbShare -ErrorAction SilentlyContinue) {
+                foreach ($share in (Get-SmbShare).Name) {
+                    $accessInfo = Get-SmbShareAccess $share -ErrorAction SilentlyContinue
+                    if ($accessInfo) {
+                        $accessInfo | Add-Member -NotePropertyName "Time" -NotePropertyValue (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK') -ErrorAction SilentlyContinue
+                        $accessInfo
+                    }
+                }
+            } else {
+                Get-WmiObject Win32_Share -ErrorAction SilentlyContinue | ForEach-Object {
+                    [PSCustomObject]@{
+                        Name        = $_.Name
+                        Path        = $_.Path
+                        Description = $_.Description
+                        Type        = $_.Type
+                        Time        = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                    }
+                }
             }
         }
     }    
@@ -724,17 +847,28 @@ function Get-LogOnHistory
     Process
     {
         Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {
-            $loggedOnUsers = Get-CimInstance -ClassName Win32_LoggedOnUser
-            $sessions = Get-CimInstance -ClassName Win32_LogonSession
+            $useCim = [bool](Get-Command Get-CimInstance -ErrorAction SilentlyContinue)
+            $loggedOnUsers = if ($useCim) {
+                Get-CimInstance -ClassName Win32_LoggedOnUser
+            } else {
+                Get-WmiObject -Class Win32_LoggedOnUser
+            }
+
+            $sessions = if ($useCim) {
+                Get-CimInstance -ClassName Win32_LogonSession
+            } else {
+                Get-WmiObject -Class Win32_LogonSession
+            }
+
             $logons = @()
 
             foreach ($user in $loggedOnUsers)
             {
                 if ($user.Antecedent -and $user.Dependent) {
                     $logons += [PSCustomObject]@{
-                        Domain  = $user.Antecedent.Domain
-                        User    = $user.Antecedent.Name
-                        LogonId = $user.Dependent.LogonId
+                        Domain  = if ($user.Antecedent.Domain) { $user.Antecedent.Domain } else { $user.Antecedent }
+                        User    = if ($user.Antecedent.Name) { $user.Antecedent.Name } else { $user.Antecedent }
+                        LogonId = if ($user.Dependent.LogonId) { $user.Dependent.LogonId } else { $user.Dependent }
                     }
                 }
             }
@@ -754,8 +888,10 @@ function Get-LogOnHistory
                 }
 
                 $startTimeUTC = $null
-                if ($session.StartTime) {
+                if ($session.StartTime -is [DateTime]) {
                     $startTimeUTC = $session.StartTime.ToUniversalTime()
+                } elseif ($session.StartTime) {
+                    try { $startTimeUTC = [Management.ManagementDateTimeConverter]::ToDateTime($session.StartTime).ToUniversalTime() } catch { $null }
                 }
 
                 [PSCustomObject]@{
@@ -776,7 +912,7 @@ function Get-LogOnHistory
     }    
 }
 
-#>
+
 
 
 # Exports Event Log
@@ -1046,7 +1182,7 @@ function Update-Event {
                 LogName              = $event.LogName
                 MachineName          = $event.MachineName
                 RecordId             = $event.RecordId
-                Time                 = (Get-Date).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'")
+                Time                 = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
                 Message              = $event.Message
                 AccountName          = $accountName
                 AccountDomain        = $accountDomain
@@ -1143,7 +1279,7 @@ Process
 
 
 # Create a session with the remote machine
-$session = New-PSSession -ComputerName $ComputerName -Credential $creds
+$session = New-PSSession -ComputerName $ComputerName -Credential $Credential
 
 # Copy the file from the remote machine to your local machine
 Copy-Item -Path $export_path -Destination $LocalPath -FromSession $session
@@ -1796,6 +1932,29 @@ function Get-ADEventLog {
     }
 }
 
+# Private helper: run a baseline function, catch errors, and export to CSV
+function Invoke-BaselineExport {
+    param(
+        [string]$Name,
+        [scriptblock]$ScriptBlock,
+        [string]$TargetFolder
+    )
+    Write-Output "Running '$Name'..."
+    try {
+        $data = & $ScriptBlock
+        if ($data) {
+            $csvPath = Join-Path $TargetFolder "${Name}.csv"
+            $data | Export-Csv -Path $csvPath -NoTypeInformation -Encoding utf8
+            Write-Output "-> Successfully exported to: $csvPath"
+        } else {
+            Write-Output "-> No data returned."
+        }
+    }
+    catch {
+        Write-Output "WARNING: Failed to run baseline '$Name': $($_.Exception.Message)"
+    }
+}
+
 # Get Host/Network Configuration Baseline
 function Get-HostBaseline {
     <#
@@ -1823,15 +1982,11 @@ function Get-HostBaseline {
     )
 
     Begin {
-        # Initialize the output folder
         if ([string]::IsNullOrWhiteSpace($OutputFolder)) {
             $timestamp = (Get-Date).ToString("yyyyMMdd_HHmmss")
             $OutputFolder = Join-Path (Get-Location) "Baselines_$timestamp"
         }
-
-        # Resolve output path to absolute path
         $OutputFolder = [System.IO.Path]::GetFullPath($OutputFolder)
-
         if (-not (Test-Path $OutputFolder)) {
             New-Item -ItemType Directory -Path $OutputFolder -Force | Out-Null
         }
@@ -1843,13 +1998,11 @@ function Get-HostBaseline {
             $compNameClean = $computer -replace '[^a-zA-Z0-9.-]', '_'
             Write-Output "=================== Baselining Target: $computer ==================="
 
-            # Create per-computer output subfolder
             $targetFolder = Join-Path $OutputFolder $compNameClean
             if (-not (Test-Path $targetFolder)) {
                 New-Item -ItemType Directory -Path $targetFolder -Force | Out-Null
             }
 
-            # 1. Test Connection
             Write-Output "Checking remote connection status using WSMan..."
             $isReady = Test-ComputerConnection -ComputerNames $computer -Credential $Credential
             if (-not $isReady) {
@@ -1858,43 +2011,21 @@ function Get-HostBaseline {
             }
             Write-Output "Connection verified successfully!"
 
-            # Helper function to run a baseline function, catch errors, and export to CSV
-            function Run-AndExportBaseline {
-                param(
-                    [string]$Name,
-                    [scriptblock]$ScriptBlock
-                )
-                Write-Output "Running '$Name'..."
-                try {
-                    $data = & $ScriptBlock
-                    if ($data) {
-                        $csvPath = Join-Path $targetFolder "${Name}.csv"
-                        $data | Export-Csv -Path $csvPath -NoTypeInformation -Encoding utf8
-                        Write-Output "-> Successfully exported to: $csvPath"
-                    } else {
-                        Write-Output "-> No data returned."
-                    }
-                }
-                catch {
-                    Write-Output "WARNING: Failed to run baseline '$Name': $($_.Exception.Message)"
-                }
-            }
+            # Host Network State Queries
+            Invoke-BaselineExport -Name "OSInfo" -TargetFolder $targetFolder -ScriptBlock { Get-OSInfo -ComputerName $computer -Credential $Credential }
+            Invoke-BaselineExport -Name "Processes" -TargetFolder $targetFolder -ScriptBlock { Get-WmiProcess -ComputerName $computer -Credential $Credential }
+            Invoke-BaselineExport -Name "Services" -TargetFolder $targetFolder -ScriptBlock { Get-ServiceInfo -ComputerName $computer -Credential $Credential }
+            Invoke-BaselineExport -Name "Connections" -TargetFolder $targetFolder -ScriptBlock { Get-Connection -ComputerName $computer -Credential $Credential }
+            Invoke-BaselineExport -Name "Shares" -TargetFolder $targetFolder -ScriptBlock { Get-ShareInfo -ComputerName $computer -Credential $Credential }
 
-            # 2. Run Host Network State Queries
-            Run-AndExportBaseline -Name "OSInfo" -ScriptBlock { Get-OSInfo -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "Processes" -ScriptBlock { Get-WmiProcess -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "Services" -ScriptBlock { Get-ServiceInfo -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "Connections" -ScriptBlock { Get-Connection -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "Shares" -ScriptBlock { Get-ShareInfo -ComputerName $computer -Credential $Credential }
-
-            # 3. Run Persistence & Security Auditing Queries
-            Run-AndExportBaseline -Name "RegistryRun" -ScriptBlock { Get-RegistryRun -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "StartupFolders" -ScriptBlock { Get-StartupFolders -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "ScheduledTasks" -ScriptBlock { Get-SchTask -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "LogonHistory" -ScriptBlock { Get-LogOnHistory -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "LocalGroupMembers" -ScriptBlock { Get-LGroupMembers -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "RegistryUserShellFolders" -ScriptBlock { Get-RegistryUserShellFolders -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "Prefetches" -ScriptBlock { Get-Prefetch -ComputerName $computer -Credential $Credential }
+            # Persistence & Security Auditing Queries
+            Invoke-BaselineExport -Name "RegistryRun" -TargetFolder $targetFolder -ScriptBlock { Get-RegistryRun -ComputerName $computer -Credential $Credential }
+            Invoke-BaselineExport -Name "StartupFolders" -TargetFolder $targetFolder -ScriptBlock { Get-StartupFolders -ComputerName $computer -Credential $Credential }
+            Invoke-BaselineExport -Name "ScheduledTasks" -TargetFolder $targetFolder -ScriptBlock { Get-SchTask -ComputerName $computer -Credential $Credential }
+            Invoke-BaselineExport -Name "LogonHistory" -TargetFolder $targetFolder -ScriptBlock { Get-LogOnHistory -ComputerName $computer -Credential $Credential }
+            Invoke-BaselineExport -Name "LocalGroupMembers" -TargetFolder $targetFolder -ScriptBlock { Get-LGroupMembers -ComputerName $computer -Credential $Credential }
+            Invoke-BaselineExport -Name "RegistryUserShellFolders" -TargetFolder $targetFolder -ScriptBlock { Get-RegistryUserShellFolders -ComputerName $computer -Credential $Credential }
+            Invoke-BaselineExport -Name "Prefetches" -TargetFolder $targetFolder -ScriptBlock { Get-Prefetch -ComputerName $computer -Credential $Credential }
         }
     }
 
@@ -1909,7 +2040,9 @@ function Get-DomainBaseline {
     .SYNOPSIS
         Generates a comprehensive baseline of domain, host, and network configurations.
     .DESCRIPTION
-        Runs all administrative, network, security, and Active Directory baseline functions against target computers and exports the results to organized CSV files.
+        Runs Get-HostBaseline for all host-level data, then additionally queries Active Directory
+        for domain controllers, users, groups, group memberships, GPOs, protected users,
+        service accounts, and AD event logs.
     .PARAMETER ComputerName
         An array of target computer names. Defaults to 'localhost'.
     .PARAMETER Credential
@@ -1930,15 +2063,11 @@ function Get-DomainBaseline {
     )
 
     Begin {
-        # Initialize the output folder
         if ([string]::IsNullOrWhiteSpace($OutputFolder)) {
             $timestamp = (Get-Date).ToString("yyyyMMdd_HHmmss")
             $OutputFolder = Join-Path (Get-Location) "DomainBaselines_$timestamp"
         }
-
-        # Resolve output path to absolute path
         $OutputFolder = [System.IO.Path]::GetFullPath($OutputFolder)
-
         if (-not (Test-Path $OutputFolder)) {
             New-Item -ItemType Directory -Path $OutputFolder -Force | Out-Null
         }
@@ -1946,72 +2075,28 @@ function Get-DomainBaseline {
     }
 
     Process {
+        # Run host baseline first (creates per-computer subfolders and host-level CSVs)
+        Get-HostBaseline -ComputerName $ComputerName -Credential $Credential -OutputFolder $OutputFolder
+
+        # Then add AD-specific queries for each computer
         foreach ($computer in $ComputerName) {
             $compNameClean = $computer -replace '[^a-zA-Z0-9.-]', '_'
-            Write-Output "=================== Baselining Domain Target: $computer ==================="
-
-            # Create per-computer output subfolder
             $targetFolder = Join-Path $OutputFolder $compNameClean
-            if (-not (Test-Path $targetFolder)) {
-                New-Item -ItemType Directory -Path $targetFolder -Force | Out-Null
-            }
 
-            # 1. Test Connection
-            Write-Output "Checking remote connection status using WSMan..."
-            $isReady = Test-ComputerConnection -ComputerNames $computer -Credential $Credential
-            if (-not $isReady) {
-                Write-Output "WARNING: WSMan connection test failed for target '$computer'. Skipping baselining."
+            if (-not (Test-Path $targetFolder)) {
+                Write-Output "Skipping AD queries for '$computer' (host baseline was skipped)."
                 continue
             }
-            Write-Output "Connection verified successfully!"
 
-            # Helper function to run a baseline function, catch errors, and export to CSV
-            function Run-AndExportBaseline {
-                param(
-                    [string]$Name,
-                    [scriptblock]$ScriptBlock
-                )
-                Write-Output "Running '$Name'..."
-                try {
-                    $data = & $ScriptBlock
-                    if ($data) {
-                        $csvPath = Join-Path $targetFolder "${Name}.csv"
-                        $data | Export-Csv -Path $csvPath -NoTypeInformation -Encoding utf8
-                        Write-Output "-> Successfully exported to: $csvPath"
-                    } else {
-                        Write-Output "-> No data returned."
-                    }
-                }
-                catch {
-                    Write-Output "WARNING: Failed to run baseline '$Name': $($_.Exception.Message)"
-                }
-            }
-
-            # 2. Run Host Network State Queries
-            Run-AndExportBaseline -Name "OSInfo" -ScriptBlock { Get-OSInfo -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "Processes" -ScriptBlock { Get-WmiProcess -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "Services" -ScriptBlock { Get-ServiceInfo -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "Connections" -ScriptBlock { Get-Connection -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "Shares" -ScriptBlock { Get-ShareInfo -ComputerName $computer -Credential $Credential }
-
-            # 3. Run Persistence & Security Auditing Queries
-            Run-AndExportBaseline -Name "RegistryRun" -ScriptBlock { Get-RegistryRun -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "StartupFolders" -ScriptBlock { Get-StartupFolders -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "ScheduledTasks" -ScriptBlock { Get-SchTask -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "LogonHistory" -ScriptBlock { Get-LogOnHistory -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "LocalGroupMembers" -ScriptBlock { Get-LGroupMembers -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "RegistryUserShellFolders" -ScriptBlock { Get-RegistryUserShellFolders -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "Prefetches" -ScriptBlock { Get-Prefetch -ComputerName $computer -Credential $Credential }
-
-            # 4. Active Directory & Domain Queries (Gracefully handle failures if AD context is unavailable)
-            Run-AndExportBaseline -Name "ADDomainController" -ScriptBlock { Get-DomainController -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "ADDomainUser" -ScriptBlock { Get-DomainUser -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "ADDomainGroup" -ScriptBlock { Get-DomainGroup -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "ADDomainGroupMembership" -ScriptBlock { Get-DomainGroupMembership -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "ADGPOInfo" -ScriptBlock { Get-GPOInfo -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "ADProtectedUsers" -ScriptBlock { Get-ProtectedUsers -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "ADServiceAccount" -ScriptBlock { Get-ServiceAccount -ComputerName $computer -Credential $Credential }
-            Run-AndExportBaseline -Name "ADEventLog" -ScriptBlock { Get-ADEventLog -ComputerName $computer -Credential $Credential }
+            Write-Output "=================== Running AD Queries for: $computer ==================="
+            Invoke-BaselineExport -Name "ADDomainController" -TargetFolder $targetFolder -ScriptBlock { Get-DomainController -ComputerName $computer -Credential $Credential }
+            Invoke-BaselineExport -Name "ADDomainUser" -TargetFolder $targetFolder -ScriptBlock { Get-DomainUser -ComputerName $computer -Credential $Credential }
+            Invoke-BaselineExport -Name "ADDomainGroup" -TargetFolder $targetFolder -ScriptBlock { Get-DomainGroup -ComputerName $computer -Credential $Credential }
+            Invoke-BaselineExport -Name "ADDomainGroupMembership" -TargetFolder $targetFolder -ScriptBlock { Get-DomainGroupMembership -ComputerName $computer -Credential $Credential }
+            Invoke-BaselineExport -Name "ADGPOInfo" -TargetFolder $targetFolder -ScriptBlock { Get-GPOInfo -ComputerName $computer -Credential $Credential }
+            Invoke-BaselineExport -Name "ADProtectedUsers" -TargetFolder $targetFolder -ScriptBlock { Get-ProtectedUsers -ComputerName $computer -Credential $Credential }
+            Invoke-BaselineExport -Name "ADServiceAccount" -TargetFolder $targetFolder -ScriptBlock { Get-ServiceAccount -ComputerName $computer -Credential $Credential }
+            Invoke-BaselineExport -Name "ADEventLog" -TargetFolder $targetFolder -ScriptBlock { Get-ADEventLog -ComputerName $computer -Credential $Credential }
         }
     }
 
@@ -2019,6 +2104,8 @@ function Get-DomainBaseline {
         Write-Output "Domain baselining run completed. All generated files are in: $OutputFolder"
     }
 }
+
+
 
 # Retrieve (pull) a suspected file from a remote host
 function Get-RemoteArtifact {
