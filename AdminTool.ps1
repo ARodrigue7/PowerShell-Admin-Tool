@@ -204,10 +204,207 @@ $ui.ImportFromFileButton.add_Click({
             Add-OutputLine -Text "Successfully imported $($comps.Count) computers." -Color "Green"
         } catch { Add-OutputLine -Text "Error reading file: $($_.Exception.Message)" -Color "Red" }
     }
-})
+})#region Interactive Modal Dialogs
+function Show-EVTXDialog {
+    $xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Get-EVTX Log Category Selection" Height="300" Width="480" WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+    <Grid Margin="15">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Text="Select Log Category to Collect:" FontWeight="Bold" FontSize="14" Margin="0,0,0,10"/>
+        <RadioButton Name="RbDfir" Grid.Row="1" Content="DFIR (Security, System, Application, PowerShell, Sysmon)" IsChecked="True" Margin="5,3"/>
+        <RadioButton Name="RbAll" Grid.Row="2" Content="All (Full winevt log store image)" Margin="5,3"/>
+        <RadioButton Name="RbCustom" Grid.Row="3" Content="Custom (Specify log names manually)" Margin="5,3"/>
+        
+        <StackPanel Grid.Row="4" Margin="25,5,5,5">
+            <TextBlock Text="Custom Logs (comma-separated):" Margin="0,0,0,3"/>
+            <TextBox Name="TxtCustomLogs" IsEnabled="False" Height="25"/>
+        </StackPanel>
+
+        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Name="BtnOK" Content="Collect Logs" Width="100" Height="30" IsDefault="True" Margin="0,0,10,0"/>
+            <Button Name="BtnCancel" Content="Cancel" Width="80" Height="30" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>
+"@
+    try {
+        [xml]$xmlDoc = $xaml
+        $reader = [System.Xml.XmlNodeReader]::new($xmlDoc)
+        $dlg = [Windows.Markup.XamlReader]::Load($reader)
+        if ($ui.Window) { $dlg.Owner = $ui.Window }
+        
+        $rbDfir = $dlg.FindName("RbDfir")
+        $rbAll  = $dlg.FindName("RbAll")
+        $rbCustom = $dlg.FindName("RbCustom")
+        $txtCustom = $dlg.FindName("TxtCustomLogs")
+        $btnOK = $dlg.FindName("BtnOK")
+        
+        $rbCustom.add_Checked({ $txtCustom.IsEnabled = $true })
+        $rbCustom.add_Unchecked({ $txtCustom.IsEnabled = $false })
+
+        $res = $null
+        $btnOK.add_Click({
+            $cat = "DFIR"
+            if ($rbAll.IsChecked) { $cat = "All" }
+            elseif ($rbCustom.IsChecked) { $cat = "Custom" }
+
+            $customList = $null
+            if ($cat -eq "Custom") {
+                if ([string]::IsNullOrWhiteSpace($txtCustom.Text)) {
+                    [System.Windows.MessageBox]::Show("Please enter at least one custom log name.", "Validation Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+                    return
+                }
+                $customList = @($txtCustom.Text.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+            }
+
+            $script:dialogResult = @{ LogCategory = $cat; CustomLogs = $customList }
+            $dlg.DialogResult = $true
+            $dlg.Close()
+        })
+
+        if ($dlg.ShowDialog() -eq $true) {
+            return $script:dialogResult
+        }
+    } catch {
+        Add-OutputLine -Text "Dialog error: $($_.Exception.Message)" -Color "Red"
+    }
+    return $null
+}
+
+function Show-RemoteArtifactDialog {
+    $xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Get-RemoteArtifact Target File" Height="200" Width="480" WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+    <Grid Margin="15">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Text="Remote File Path to Retrieve:" FontWeight="Bold" FontSize="14" Margin="0,0,0,3"/>
+        <TextBlock Grid.Row="1" Text="Example: C:\Windows\Temp\suspect.exe" Foreground="Gray" Margin="0,0,0,10"/>
+        <TextBox Name="TxtPath" Grid.Row="2" Height="25" VerticalAlignment="Top"/>
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Name="BtnOK" Content="Pull Artifact" Width="100" Height="30" IsDefault="True" Margin="0,0,10,0"/>
+            <Button Name="BtnCancel" Content="Cancel" Width="80" Height="30" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>
+"@
+    try {
+        [xml]$xmlDoc = $xaml
+        $reader = [System.Xml.XmlNodeReader]::new($xmlDoc)
+        $dlg = [Windows.Markup.XamlReader]::Load($reader)
+        if ($ui.Window) { $dlg.Owner = $ui.Window }
+        
+        $txtPath = $dlg.FindName("TxtPath")
+        $btnOK = $dlg.FindName("BtnOK")
+        
+        $btnOK.add_Click({
+            if ([string]::IsNullOrWhiteSpace($txtPath.Text)) {
+                [System.Windows.MessageBox]::Show("Remote file path cannot be empty.", "Validation Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+                return
+            }
+            $script:artifactResult = $txtPath.Text.Trim()
+            $dlg.DialogResult = $true
+            $dlg.Close()
+        })
+
+        if ($dlg.ShowDialog() -eq $true) {
+            return $script:artifactResult
+        }
+    } catch {}
+    return $null
+}
+
+function Show-CriticalEventXMLDialog {
+    $xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Get-CriticalEventXML Date Range Filter" Height="230" Width="480" WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+    <Grid Margin="15">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Text="Specify Date Range for Critical Event Audit:" FontWeight="Bold" FontSize="14" Margin="0,0,0,10"/>
+        
+        <Grid Grid.Row="1" Margin="0,5">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="100"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Begin Time:" VerticalAlignment="Center"/>
+            <TextBox Name="TxtBeginTime" Grid.Column="1" Height="25"/>
+        </Grid>
+        
+        <Grid Grid.Row="2" Margin="0,5">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="100"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="End Time:" VerticalAlignment="Center"/>
+            <TextBox Name="TxtEndTime" Grid.Column="1" Height="25"/>
+        </Grid>
+
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Name="BtnOK" Content="Run Query" Width="100" Height="30" IsDefault="True" Margin="0,0,10,0"/>
+            <Button Name="BtnCancel" Content="Cancel" Width="80" Height="30" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>
+"@
+    try {
+        [xml]$xmlDoc = $xaml
+        $reader = [System.Xml.XmlNodeReader]::new($xmlDoc)
+        $dlg = [Windows.Markup.XamlReader]::Load($reader)
+        if ($ui.Window) { $dlg.Owner = $ui.Window }
+        
+        $txtBegin = $dlg.FindName("TxtBeginTime")
+        $txtEnd   = $dlg.FindName("TxtEndTime")
+        $btnOK    = $dlg.FindName("BtnOK")
+
+        $txtBegin.Text = (Get-Date).AddHours(-48).ToString("MM/dd/yyyy HH:mm")
+        $txtEnd.Text   = (Get-Date).ToString("MM/dd/yyyy HH:mm")
+
+        $btnOK.add_Click({
+            if ([string]::IsNullOrWhiteSpace($txtBegin.Text) -or [string]::IsNullOrWhiteSpace($txtEnd.Text)) {
+                [System.Windows.MessageBox]::Show("Begin and End times cannot be empty.", "Validation Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+                return
+            }
+            $script:dateResult = @{ BeginTime = $txtBegin.Text.Trim(); EndTime = $txtEnd.Text.Trim() }
+            $dlg.DialogResult = $true
+            $dlg.Close()
+        })
+
+        if ($dlg.ShowDialog() -eq $true) {
+            return $script:dateResult
+        }
+    } catch {}
+    return $null
+}
+#endregion
 
 $ui.ComputerInputTextBox.add_TextChanged({ Update-ComputerListView })
-$ui.ScriptSelectionComboBox.add_SelectionChanged({ Update-ScriptDescriptionView })
+$ui.ScriptSelectionComboBox.add_SelectionChanged({
+    Update-ScriptDescriptionView
+    $selectedScript = $ui.ScriptSelectionComboBox.SelectedItem
+    if ($selectedScript -and ($selectedScript.Name -in @('Get-EVTX', 'Get-RemoteArtifact', 'Get-CriticalEventXML'))) {
+        $ui.ArgumentsTextBox.IsEnabled = $false
+        $ui.ArgumentsTextBox.ToolTip = "Parameters for '$($selectedScript.Name)' will be collected via a dedicated popup dialog."
+    } else {
+        $ui.ArgumentsTextBox.IsEnabled = $true
+        $ui.ArgumentsTextBox.ToolTip = "Enter arguments or paths for the function (e.g. C:\Windows\System32\drivers\etc\hosts)"
+    }
+})
 
 $ui.GetInfoButton.add_Click({
     $Global:LastJobResults = $null
@@ -292,17 +489,51 @@ $ui.RunScriptButton.add_Click({
     if (-not $computers) { Add-OutputLine -Text "No target computers specified." -Color "Red"; return }
     if (-not $selectedScript) { Add-OutputLine -Text "No function selected." -Color "Red"; return }
     
-    Add-OutputLine -Text "Executing function '$($selectedScript.Name)' (Asynchronous)..." -Color "Blue"
-    $cred = New-PSCredentialFromUI
     $funcName = $selectedScript.Name
+    $extraParams = @{}
+
+    # Check if selected function needs a popup dialog
+    if ($funcName -eq 'Get-EVTX') {
+        $evtxRes = Show-EVTXDialog
+        if ($null -eq $evtxRes) {
+            Add-OutputLine -Text "Get-EVTX execution cancelled by operator." -Color "Yellow"
+            return
+        }
+        $extraParams['LogCategory'] = $evtxRes.LogCategory
+        if ($evtxRes.CustomLogs) { $extraParams['CustomLogs'] = $evtxRes.CustomLogs }
+    }
+    elseif ($funcName -eq 'Get-RemoteArtifact') {
+        $artifactPath = Show-RemoteArtifactDialog
+        if ([string]::IsNullOrWhiteSpace($artifactPath)) {
+            Add-OutputLine -Text "Get-RemoteArtifact execution cancelled by operator." -Color "Yellow"
+            return
+        }
+        $extraParams['Path'] = $artifactPath
+    }
+    elseif ($funcName -eq 'Get-CriticalEventXML') {
+        $dateRes = Show-CriticalEventXMLDialog
+        if ($null -eq $dateRes) {
+            Add-OutputLine -Text "Get-CriticalEventXML execution cancelled by operator." -Color "Yellow"
+            return
+        }
+        $extraParams['BeginTime'] = $dateRes.BeginTime
+        $extraParams['EndTime']   = $dateRes.EndTime
+    }
+    else {
+        if (-not [string]::IsNullOrWhiteSpace($ui.ArgumentsTextBox.Text)) {
+            $extraParams['Path'] = $ui.ArgumentsTextBox.Text
+        }
+    }
+
+    Add-OutputLine -Text "Executing function '$funcName' (Asynchronous)..." -Color "Blue"
+    $cred = New-PSCredentialFromUI
     $modPath = $Global:ModulePath
-    $argumentsText = $ui.ArgumentsTextBox.Text
 
     # Start the job
     $jobName = "Execute_$($funcName)_$(Get-Date -Format 'HHmmss')"
     try {
         $job = Start-Job -Name $jobName -ScriptBlock {
-            param($modulePath, $functionName, $computers, $credential, $arguments)
+            param($modulePath, $functionName, $computers, $credential, $extraParams)
             
             # Global overrides inside the job process BEFORE importing the module
             function global:Get-Credential { return $null }
@@ -367,14 +598,16 @@ $ui.RunScriptButton.add_Click({
                     $params['Credential'] = $credential
                 }
             }
-            if ($arguments) {
-                if ($command.Parameters.ContainsKey('Path')) {
-                    $params['Path'] = $arguments
+            if ($extraParams -and $extraParams -is [hashtable]) {
+                foreach ($k in $extraParams.Keys) {
+                    if ($command.Parameters.ContainsKey($k)) {
+                        $params[$k] = $extraParams[$k]
+                    }
                 }
             }
             
             & $functionName @params
-        } -ArgumentList $modPath, $funcName, $computers, $cred, $argumentsText
+        } -ArgumentList $modPath, $funcName, $computers, $cred, $extraParams
 
         if ($job) {
             $Global:ActiveJobs[$job.Id] = $job

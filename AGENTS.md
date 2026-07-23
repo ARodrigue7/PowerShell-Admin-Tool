@@ -25,15 +25,33 @@
    - **Performance Critical**: Always cache `$useCim = [bool](Get-Command Get-CimInstance ...)` ONCE at the top of the remote `ScriptBlock`, rather than calling `Get-Command` inside loops.
 
 4. **Baselining Functions**:
-   - `Get-HostBaseline`: Queries host network state, processes, services, connections, shares, persistence (registry run keys, startup folders, scheduled tasks), logon history, local group members, shell folders, and prefetches.
-   - `Get-DomainBaseline`: Invokes `Get-HostBaseline` first, then runs Active Directory queries (domain controllers, users, groups, memberships, GPOs, protected users, service accounts, and AD event logs).
+   - `Get-HostBaseline`: Queries host network state, processes, services, connections, shares, persistence (registry run keys, startup folders, scheduled tasks), logon history, local group members, shell folders, and prefetches. Default output path: `./Output/Baselines/HostBaselines_<timestamp>`.
+   - `Get-DomainBaseline`: Invokes `Get-HostBaseline` first, then runs Active Directory queries (domain controllers, users, groups, memberships, GPOs, protected users, service accounts, and AD event logs). Default output path: `./Output/Baselines/DomainBaselines_<timestamp>`.
    - Use `Invoke-BaselineExport` to handle standard CSV output generation for baseline queries.
 
-5. **Timestamp Standard**:
+5. **Unified Output Directory Structure (`./Output/`)**:
+   - All exported data, logs, baselines, and artifacts MUST be saved relative to the current tool location under `./Output/`:
+     - EVTX Logs (`Get-EVTX`): `./Output/EVTX_Logs/<hostname>_<timestamp>/`
+     - Host Baselines (`Get-HostBaseline`): `./Output/Baselines/HostBaselines_<timestamp>/`
+     - Domain Baselines (`Get-DomainBaseline`): `./Output/Baselines/DomainBaselines_<timestamp>/`
+     - Remote Artifacts (`Get-RemoteArtifact`): `./Output/Artifacts/`
+
+6. **EVTX Forensic Log Collection & Protocol Fallback**:
+   - `Get-EVTX` incorporates LOOT multi-protocol forensic extraction (`Method = Auto|SMB|WinRM|WMI`).
+   - `Auto` method sequence attempts `SMB` (Port 445) first for speed, then `WinRM` (Port 5985), and finally `WMI` (DCOM/RPC Port 135).
+   - Supports presets: `DFIR` (Security, System, Application, PowerShell, Sysmon), `All` (winevt log store), or `Custom`.
+   - Uses remote `wevtutil epl` to export active logs cleanly without file lock failures.
+
+7. **Interactive GUI Modal Dialogs**:
+   - `AdminTool.ps1` dynamically disables the generic `ArgumentsTextBox` for functions requiring specific input parameters (`Get-EVTX`, `Get-RemoteArtifact`, `Get-CriticalEventXML`).
+   - Modal WPF dialogs pop up upon clicking "Execute Function" to guide the operator cleanly through selecting log presets, artifact paths, or date range filters.
+
+8. **Timestamp Standard**:
    - All timestamp properties in output custom objects MUST use the standard ISO 8601 format:
      - Local: `(Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')`
      - UTC: `(Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')`
 
-6. **Credential Handling**:
+9. **Credential Handling**:
    - Functions accept `[PSCredential]$Credential` parameter.
    - When running via `AdminTool.ps1` or background jobs, explicit UI credentials or `$null` (for default WSMan session context) are passed down. Avoid interactive prompts inside remote scriptblocks.
+

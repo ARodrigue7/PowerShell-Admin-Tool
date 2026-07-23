@@ -1252,88 +1252,256 @@ function Update-Event {
 }
 
 # Function that exports event logs to an EVTX file and copies it back to your machine
+# Function that exports event logs to EVTX files using LOOT multi-protocol forensic collection (SMB, WinRM, WMI, Auto)
 function Get-EVTX
 {
+    <#
+    .SYNOPSIS
+        Collects forensic EVTX event logs from target computers.
+    .DESCRIPTION
+        Acquires event logs using multi-protocol collection (SMB, WinRM, WMI/DCOM, or Auto fallback).
+        Uses native wevtutil exports on remote targets to bypass file locks cleanly.
+        Supports presets: DFIR (Security, System, Application, PowerShell, Sysmon), All (full winevt log store), or Custom.
+    .PARAMETER ComputerName
+        An array of target computer names or IP addresses. Defaults to 'localhost'.
+    .PARAMETER Credential
+        Optional PSCredential object for alternate authentication.
+    .PARAMETER Method
+        Collection method: Auto (SMB -> WinRM -> WMI), SMB, WinRM, or WMI. Default is 'Auto'.
+    .PARAMETER LogCategory
+        Log category preset: DFIR, All, or Custom. Default is 'DFIR'.
+    .PARAMETER CustomLogs
+        An array of exact Windows log names to pull when LogCategory is set to 'Custom'.
+    .PARAMETER OutputFolder
+        Directory where EVTX files will be saved. Defaults to './Output/EVTX_Logs/<hostname>_<timestamp>' relative to execution path.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromPipeline=$true)]
+        [string[]]$ComputerName = @("localhost"),
 
- [cmdletbinding()]
- Param
- (
-    [Parameter(ValueFromPipeline=$true,Mandatory=$true)]
-    [string[]]
-    $ComputerName,
+        [Parameter()]
+        [System.Management.Automation.PSCredential]$Credential,
 
-    [Parameter(Mandatory=$true)]
-    [pscredential]
-    $Credential,
+        [Parameter()]
+        [ValidateSet('Auto','SMB','WinRM','WMI')]
+        [string]$Method = 'Auto',
 
-    [Parameter(Mandatory=$false)]
-    [string]
-    $LogName='Security',
+        [Parameter()]
+        [ValidateSet('DFIR','All','Custom')]
+        [string]$LogCategory = 'DFIR',
 
-    [Parameter(Mandatory=$false)]
-    [string]
-    $StartDate = (Get-Date).AddDays(-2),
+        [Parameter()]
+        [string[]]$CustomLogs,
 
-    [Parameter(Mandatory=$false)]
-    [string]
-    $EndDate = (Get-Date),
+        [Parameter()]
+        [string]$OutputFolder
+    )
 
-    [Parameter(Mandatory=$false)]
-    [string]
-    $LocalPath = "$env:USERPROFILE\Desktop\" + $LogName + ".evtx"
+    Begin {
+        if (!$Credential) {
+            $Credential = $null
+        }
 
-)
+        $dfirPreset = @(
+            "Security",
+            "System",
+            "Application",
+            "Windows PowerShell",
+            "Microsoft-Windows-PowerShell/Operational",
+            "Microsoft-Windows-Sysmon/Operational"
+        )
 
-Begin
-{
-    If (!$Credential) {$Credential = Get-Credential}
-}
-
-Process
-{ 
-    $export_path = Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {"$env:USERPROFILE\AppData\Local\Temp\$using:LogName" + "_Exported.evtx"}
-
-    Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {
-
-    # create time frame
-    function GetMilliseconds ($date) {
-        $ts = New-TimeSpan -Start $date -End (Get-Date)
-        $ts.Ticks / 10000 # Divide by 10,000 to convert ticks to milliseconds
-        } 
-
-     $StartMilliseconds = GetMilliseconds $using:StartDate
-     $EndMilliseconds = GetMilliseconds $using:EndDate
-
-    # Event Log Query
-    $query = "*[System[TimeCreated[timediff(@SystemTime) >= $EndMilliseconds and timediff(@SystemTime) <= $StartMilliseconds]]]"
-
-    # Create the EventLogSession Object
-    $EventSession = New-Object System.Diagnostics.Eventing.Reader.EventLogSession
-
-     # Test if destination file already exists
-    if(Test-Path -Path $using:export_path)
-    {
-       return Write-Error -Message "File already exists"
+        $logsToPull = @()
+        if ($LogCategory -eq 'DFIR') {
+            $logsToPull = $dfirPreset
+        } elseif ($LogCategory -eq 'Custom' -and $CustomLogs) {
+            $logsToPull = $CustomLogs | ForEach-Object { $_.Trim() }
+        }
     }
 
+    Process {
+        $missionTimestamp = (Get-Date).ToString("yyyyMMdd_HHmmss")
+        $remoteTemp = "C:\Windows\Temp\LOOT_Export"
 
-    # Export the log and messages
-    $EventSession.ExportLogAndMessages($using:LogName, [System.Diagnostics.Eventing.Reader.PathType]::LogName,$query, $using:export_path)
+        foreach ($computer in $ComputerName) {
+            if ([string]::IsNullOrWhiteSpace($computer)) { continue }
 
+            $compNameClean = $computer -replace '[^a-zA-Z0-9.-]', '_'
+            $targetOutput = if ([string]::IsNullOrWhiteSpace($OutputFolder)) {
+                Join-Path (Get-Location) "Output/EVTX_Logs/${compNameClean}_${missionTimestamp}"
+            } else {
+                Join-Path $OutputFolder "${compNameClean}_${missionTimestamp}"
+            }
 
-}#End of Script Block
+            if (-not (Test-Path $targetOutput)) {
+                New-Item -ItemType Directory -Path $targetOutput -Force | Out-Null
+            }
 
+            Write-Output "=================== EVTX Log Collection Target: $computer ==================="
+            Write-Output "Target Folder: $targetOutput"
+            Write-Output "Log Preset   : $LogCategory"
+            Write-Output "Method       : $Method"
 
-# Create a session with the remote machine
-$session = New-PSSession -ComputerName $ComputerName -Credential $Credential
+            # Determine protocol execution order
+            $methodsToTry = if ($Method -eq 'Auto') { @('SMB', 'WinRM', 'WMI') } else { @($Method) }
+            $collected = $false
 
-# Copy the file from the remote machine to your local machine
-Copy-Item -Path $export_path -Destination $LocalPath -FromSession $session
+            foreach ($currentMethod in $methodsToTry) {
+                if ($collected) { break }
 
-# Remove event log from remote machine
-Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock { Remove-Item -Path $using:export_path }
+                try {
+                    # --- SMB METHOD ---
+                    if ($currentMethod -eq 'SMB') {
+                        Write-Output "  [SMB] Attempting administrative C`$ share connection..."
+                        $drv = $null
+                        foreach ($l in (90..68 | ForEach-Object { [char]$_ })) {
+                            if (-not (Get-PSDrive -Name $l -ErrorAction SilentlyContinue)) {
+                                $drv = $l
+                                break
+                            }
+                        }
+                        if ($null -eq $drv) { throw "No available drive letters to mount SMB share." }
 
-}#End of Process
+                        $mountArgs = @{ Name = $drv; PSProvider = 'FileSystem'; Root = "\\${computer}\C$" }
+                        if ($Credential) { $mountArgs['Credential'] = $Credential }
+                        New-PSDrive @mountArgs -ErrorAction Stop | Out-Null
+                        Write-Output "  [SMB] Connected to \\${computer}\C`$ on drive ${drv}:\"
+
+                        if ($LogCategory -eq 'All') {
+                            Write-Output "  [SMB] Copying all .evtx files directly from disk..."
+                            $filesToCopy = Get-ChildItem -Path "${drv}:\Windows\System32\winevt\Logs\*.evtx" -File -ErrorAction SilentlyContinue
+                            foreach ($file in $filesToCopy) {
+                                Copy-Item -Path $file.FullName -Destination $targetOutput -Force
+                            }
+                        } else {
+                            foreach ($log in $logsToPull) {
+                                $evtxName   = ($log -replace "/", "%4") + ".evtx"
+                                $sourcePath = "${drv}:\Windows\System32\winevt\Logs\${evtxName}"
+                                if (Test-Path $sourcePath) {
+                                    Copy-Item -Path $sourcePath -Destination $targetOutput -Force
+                                    Write-Output "  [SMB] Acquired: $evtxName"
+                                }
+                            }
+                        }
+
+                        Remove-PSDrive -Name $drv -Force | Out-Null
+                        Write-Output "  [SMB] Collection complete. Share unmounted."
+                        $collected = $true
+                    }
+
+                    # --- WINRM METHOD ---
+                    elseif ($currentMethod -eq 'WinRM') {
+                        Write-Output "  [WinRM] Establishing PSSession..."
+                        $sessionParams = @{ ComputerName = $computer }
+                        if ($Credential) { $sessionParams['Credential'] = $Credential }
+                        $session = New-PSSession @sessionParams -ErrorAction Stop
+
+                        Write-Output "  [WinRM] Batch exporting locked logs via wevtutil..."
+                        Invoke-Command -Session $session -ScriptBlock {
+                            param($temp, $category, $logs)
+                            New-Item -ItemType Directory -Path $temp -Force | Out-Null
+                            if ($category -eq 'All') {
+                                $remoteLogs = wevtutil el
+                                foreach ($log in $remoteLogs) {
+                                    $exportName = ($log -replace "[/\\ ]", "_") + ".evtx"
+                                    wevtutil epl $log "$temp\$exportName" /overwrite:true 2>$null
+                                }
+                            } else {
+                                foreach ($log in $logs) {
+                                    $exportName = ($log -replace "[/\\ ]", "_") + ".evtx"
+                                    wevtutil epl $log "$temp\$exportName" /overwrite:true 2>$null
+                                }
+                            }
+                        } -ArgumentList $remoteTemp, $LogCategory, $logsToPull
+
+                        Write-Output "  [WinRM] Downloading exported EVTX files..."
+                        $remoteFiles = Invoke-Command -Session $session -ScriptBlock {
+                            Get-ChildItem -Path $args[0] -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
+                        } -ArgumentList $remoteTemp
+
+                        if ($remoteFiles) {
+                            foreach ($rFileName in $remoteFiles) {
+                                Copy-Item -FromSession $session -Path "$remoteTemp\$rFileName" -Destination $targetOutput -Force
+                                Write-Output "  [WinRM] Acquired: $rFileName"
+                            }
+                        }
+
+                        # Cleanup remote temp
+                        Invoke-Command -Session $session -ScriptBlock { Remove-Item -Path $args[0] -Recurse -Force -ErrorAction SilentlyContinue } -ArgumentList $remoteTemp | Out-Null
+                        Remove-PSSession -Session $session
+                        Write-Output "  [WinRM] Collection complete. Session closed and remote temp cleaned."
+                        $collected = $true
+                    }
+
+                    # --- WMI METHOD (DCOM/RPC) ---
+                    elseif ($currentMethod -eq 'WMI') {
+                        Write-Output "  [WMI] Mounting SMB drive for file transfer..."
+                        $drv = $null
+                        foreach ($l in (90..68 | ForEach-Object { [char]$_ })) {
+                            if (-not (Get-PSDrive -Name $l -ErrorAction SilentlyContinue)) {
+                                $drv = $l
+                                break
+                            }
+                        }
+                        if ($null -eq $drv) { throw "No available drive letters to mount SMB share." }
+
+                        $mountArgs = @{ Name = $drv; PSProvider = 'FileSystem'; Root = "\\${computer}\C$" }
+                        if ($Credential) { $mountArgs['Credential'] = $Credential }
+                        New-PSDrive @mountArgs -ErrorAction Stop | Out-Null
+
+                        Write-Output "  [WMI] Establishing remote DCOM CIM session..."
+                        $cimOption = New-CimSessionOption -Protocol DCOM
+                        $cimParams = @{ ComputerName = $computer; SessionOption = $cimOption }
+                        if ($Credential) { $cimParams['Credential'] = $Credential }
+                        $cimSession = New-CimSession @cimParams -ErrorAction Stop
+
+                        $createDirCmd = "cmd.exe /c mkdir $remoteTemp"
+                        $null = Invoke-CimMethod -CimSession $cimSession -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $createDirCmd }
+
+                        if ($LogCategory -eq 'All') {
+                            $psCmd = "powershell -NoProfile -Command `"[System.Diagnostics.Eventing.Reader.EventLogSession]::GlobalSession.GetLogNames() | ForEach-Object { wevtutil epl `"`$_`" `"$remoteTemp\(\`$_ -replace '[/\\ ]', '_').evtx`" /overwrite:true 2>`$null }`""
+                            $null = Invoke-CimMethod -CimSession $cimSession -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $psCmd }
+                            Start-Sleep -Seconds 3
+                        } else {
+                            foreach ($log in $logsToPull) {
+                                $exportName = ($log -replace "[/\\ ]", "_") + ".evtx"
+                                $exportCmd = "wevtutil epl `"$log`" `"$remoteTemp\$exportName`" /overwrite:true"
+                                $null = Invoke-CimMethod -CimSession $cimSession -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $exportCmd }
+                            }
+                        }
+
+                        $checkPath = "${drv}:\Windows\Temp\LOOT_Export"
+                        Start-Sleep -Seconds 2
+                        if (Test-Path $checkPath) {
+                            $filesToCopy = Get-ChildItem -Path "$checkPath\*.evtx" -File -ErrorAction SilentlyContinue
+                            foreach ($file in $filesToCopy) {
+                                Copy-Item -Path $file.FullName -Destination $targetOutput -Force
+                                Write-Output "  [WMI] Acquired: $($file.Name)"
+                            }
+                            $cleanCmd = "cmd.exe /c rmdir /s /q $remoteTemp"
+                            $null = Invoke-CimMethod -CimSession $cimSession -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cleanCmd }
+                        }
+
+                        Remove-CimSession -Session $cimSession
+                        Remove-PSDrive -Name $drv -Force | Out-Null
+                        Write-Output "  [WMI] Collection complete. WMI session closed."
+                        $collected = $true
+                    }
+                }
+                catch {
+                    Write-Output "  [!] Method $currentMethod failed for $computer : $($_.Exception.Message)"
+                    if ($Method -ne 'Auto') {
+                        Write-Error "EVTX collection failed using method $currentMethod : $($_.Exception.Message)"
+                    }
+                }
+            }
+
+            if (-not $collected) {
+                Write-Error "Failed to collect EVTX logs from $computer using any available protocol."
+            }
+        }
+    }
 }
 
 # Test if WinRM and Invoke Command will work on an array of computers
@@ -2033,7 +2201,7 @@ function Get-HostBaseline {
     Begin {
         if ([string]::IsNullOrWhiteSpace($OutputFolder)) {
             $timestamp = (Get-Date).ToString("yyyyMMdd_HHmmss")
-            $OutputFolder = Join-Path (Get-Location) "Baselines_$timestamp"
+            $OutputFolder = Join-Path (Get-Location) "Output/Baselines/HostBaselines_$timestamp"
         }
         $OutputFolder = [System.IO.Path]::GetFullPath($OutputFolder)
         if (-not (Test-Path $OutputFolder)) {
@@ -2114,7 +2282,7 @@ function Get-DomainBaseline {
     Begin {
         if ([string]::IsNullOrWhiteSpace($OutputFolder)) {
             $timestamp = (Get-Date).ToString("yyyyMMdd_HHmmss")
-            $OutputFolder = Join-Path (Get-Location) "DomainBaselines_$timestamp"
+            $OutputFolder = Join-Path (Get-Location) "Output/Baselines/DomainBaselines_$timestamp"
         }
         $OutputFolder = [System.IO.Path]::GetFullPath($OutputFolder)
         if (-not (Test-Path $OutputFolder)) {
@@ -2192,9 +2360,9 @@ function Get-RemoteArtifact {
             $Credential = Get-Credential
         }
 
-        # Default destination to ./artifacts relative to the current path
+        # Default destination to ./Output/Artifacts relative to the current path
         if ([string]::IsNullOrWhiteSpace($Destination)) {
-            $Destination = Join-Path (Get-Location) "artifacts"
+            $Destination = Join-Path (Get-Location) "Output/Artifacts"
         }
 
         # Resolve destination path to absolute path
