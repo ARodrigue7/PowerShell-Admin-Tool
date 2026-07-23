@@ -1255,26 +1255,6 @@ function Update-Event {
 # Function that exports event logs to EVTX files using LOOT multi-protocol forensic collection (SMB, WinRM, WMI, Auto)
 function Get-EVTX
 {
-    <#
-    .SYNOPSIS
-        Collects forensic EVTX event logs from target computers.
-    .DESCRIPTION
-        Acquires event logs using multi-protocol collection (SMB, WinRM, WMI/DCOM, or Auto fallback).
-        Uses native wevtutil exports on remote targets to bypass file locks cleanly.
-        Supports presets: DFIR (Security, System, Application, PowerShell, Sysmon), All (full winevt log store), or Custom.
-    .PARAMETER ComputerName
-        An array of target computer names or IP addresses. Defaults to 'localhost'.
-    .PARAMETER Credential
-        Optional PSCredential object for alternate authentication.
-    .PARAMETER Method
-        Collection method: Auto (SMB -> WinRM -> WMI), SMB, WinRM, or WMI. Default is 'Auto'.
-    .PARAMETER LogCategory
-        Log category preset: DFIR, All, or Custom. Default is 'DFIR'.
-    .PARAMETER CustomLogs
-        An array of exact Windows log names to pull when LogCategory is set to 'Custom'.
-    .PARAMETER OutputFolder
-        Directory where EVTX files will be saved. Defaults to './Output/EVTX_Logs/<hostname>_<timestamp>' relative to execution path.
-    #>
     [CmdletBinding()]
     param(
         [Parameter(ValueFromPipeline=$true)]
@@ -2174,18 +2154,6 @@ function Invoke-BaselineExport {
 
 # Get Host/Network Configuration Baseline
 function Get-HostBaseline {
-    <#
-    .SYNOPSIS
-        Generates a comprehensive baseline of host and network configurations.
-    .DESCRIPTION
-        Runs all administrative, network, and security baseline functions against target computers and exports the results to organized CSV files.
-    .PARAMETER ComputerName
-        An array of target computer names. Defaults to 'localhost'.
-    .PARAMETER Credential
-        Optional PSCredential object for alternate authentication.
-    .PARAMETER OutputFolder
-        The directory where baseline files will be stored. Defaults to 'Baselines_yyyyMMdd_HHmmss' in the current working directory.
-    #>
     [CmdletBinding()]
     param(
         [Parameter(ValueFromPipeline = $true)]
@@ -2253,20 +2221,6 @@ function Get-HostBaseline {
 
 # Get Domain/Server Configuration Baseline (Includes Host configuration and AD/Domain queries)
 function Get-DomainBaseline {
-    <#
-    .SYNOPSIS
-        Generates a comprehensive baseline of domain, host, and network configurations.
-    .DESCRIPTION
-        Runs Get-HostBaseline for all host-level data, then additionally queries Active Directory
-        for domain controllers, users, groups, group memberships, GPOs, protected users,
-        service accounts, and AD event logs.
-    .PARAMETER ComputerName
-        An array of target computer names. Defaults to 'localhost'.
-    .PARAMETER Credential
-        Optional PSCredential object for alternate authentication.
-    .PARAMETER OutputFolder
-        The directory where baseline files will be stored. Defaults to 'DomainBaselines_yyyyMMdd_HHmmss' in the current working directory.
-    #>
     [CmdletBinding()]
     param(
         [Parameter(ValueFromPipeline = $true)]
@@ -2326,28 +2280,6 @@ function Get-DomainBaseline {
 
 # Retrieve (pull) a suspected file or directory from a remote host with zipping and remote cleanup options
 function Get-RemoteArtifact {
-    <#
-    .SYNOPSIS
-        Collects a suspected file, executable, or directory from a target computer.
-    .DESCRIPTION
-        Establishes a connection to the target computer and retrieves the specified artifact.
-        Supports artifact classification: File (raw copy), Executable (zipped with password protection to bypass AV network inspection), or Directory (recursive zip).
-        Includes post-acquisition remote cleanup (-CleanRemote) to remove the artifact from the target machine during incident response.
-    .PARAMETER ComputerName
-        An array of target computer names. Defaults to 'localhost'.
-    .PARAMETER Credential
-        Optional PSCredential object for authentication.
-    .PARAMETER Path
-        The absolute path to the suspected file or directory on the remote computer (e.g., 'C:\Windows\Temp\suspect.exe').
-    .PARAMETER Type
-        Artifact mode: Auto (auto-detect), File (raw copy), Executable (zipped with password), or Directory (recursive zip). Default is 'Auto'.
-    .PARAMETER ZipPassword
-        Password to protect the executable zip package. Defaults to 'infected'.
-    .PARAMETER CleanRemote
-        Switch parameter. If specified, deletes the target artifact from the remote host after successful acquisition.
-    .PARAMETER Destination
-        The local directory where the file will be saved. Defaults to './Output/Artifacts' (relative to execution path).
-    #>
     [CmdletBinding()]
     param(
         [Parameter(ValueFromPipeline = $true)]
@@ -2546,27 +2478,6 @@ function Get-RemoteArtifact {
 
 # Reset password for compromised Active Directory user accounts
 function Reset-ADUserPassword {
-    <#
-    .SYNOPSIS
-        Force-resets passwords for compromised Active Directory user accounts.
-    .DESCRIPTION
-        Connects to a Domain Controller or domain target and resets user account passwords.
-        Supports auto-generating strong 20-character complex passwords if not specified.
-        Uses ADSI searcher fallback so it works on any domain host without requiring RSAT.
-        Unlocks locked accounts and sets pwdLastSet = 0 to require password change at next logon.
-    .PARAMETER ComputerName
-        An array of target computer names or Domain Controllers. Defaults to 'localhost'.
-    .PARAMETER Credential
-        Optional PSCredential object for domain administrative authentication.
-    .PARAMETER Identity
-        An array of target usernames / sAMAccountNames to reset.
-    .PARAMETER NewPassword
-        Optional custom password string. If blank or omitted, a strong 20-character password is generated.
-    .PARAMETER MustChangePassword
-        Switch parameter. Forces user to change password at next logon. Default is $true.
-    .PARAMETER UnlockAccount
-        Switch parameter. Unlocks account if locked. Default is $true.
-    #>
     [CmdletBinding()]
     param(
         [Parameter(ValueFromPipeline = $true)]
@@ -2675,22 +2586,6 @@ function Reset-ADUserPassword {
 
 # Terminate running process on target host
 function Stop-RemoteProcess {
-    <#
-    .SYNOPSIS
-        Terminates a process on target computers by Process Name or PID.
-    .DESCRIPTION
-        Kills matching processes remotely using Stop-Process with CIM/WMI fallback for legacy targets.
-    .PARAMETER ComputerName
-        An array of target computer names. Defaults to 'localhost'.
-    .PARAMETER Credential
-        Optional PSCredential object for authentication.
-    .PARAMETER ProcessName
-        Name of the process to terminate (e.g., 'malware.exe' or 'mimikatz').
-    .PARAMETER ProcessId
-        PID of the specific process to terminate.
-    .PARAMETER Force
-        Switch parameter. Forces termination of target process. Default is $true.
-    #>
     [CmdletBinding()]
     param(
         [Parameter(ValueFromPipeline = $true)]
@@ -2772,20 +2667,6 @@ function Stop-RemoteProcess {
 
 # Remove file or directory from remote target
 function Remove-RemoteItem {
-    <#
-    .SYNOPSIS
-        Deletes a file or directory from target computers.
-    .DESCRIPTION
-        Removes files or directories remotely using Remove-Item with optional recursive deletion.
-    .PARAMETER ComputerName
-        An array of target computer names. Defaults to 'localhost'.
-    .PARAMETER Credential
-        Optional PSCredential object for authentication.
-    .PARAMETER Path
-        The absolute path to the file or directory on the target computer (e.g., 'C:\Windows\Temp\malware.exe').
-    .PARAMETER Recurse
-        Switch parameter. Recursively deletes directory contents. Default is $true.
-    #>
     [CmdletBinding()]
     param(
         [Parameter(ValueFromPipeline = $true)]
@@ -2840,18 +2721,6 @@ function Remove-RemoteItem {
 
 # Stop a Windows service on target computer
 function Stop-RemoteService {
-    <#
-    .SYNOPSIS
-        Stops a running Windows service on target computers.
-    .DESCRIPTION
-        Stops the specified service using Stop-Service -Force with CIM/WMI fallback for legacy targets.
-    .PARAMETER ComputerName
-        An array of target computer names. Defaults to 'localhost'.
-    .PARAMETER Credential
-        Optional PSCredential object for authentication.
-    .PARAMETER Name
-        Service Name or Display Name to stop (e.g., 'Spooler' or 'wuauserv').
-    #>
     [CmdletBinding()]
     param(
         [Parameter(ValueFromPipeline = $true)]
@@ -2924,18 +2793,6 @@ function Stop-RemoteService {
 
 # Remove/delete a Windows service from target computer
 function Remove-RemoteService {
-    <#
-    .SYNOPSIS
-        Deletes a Windows service entirely from target computers.
-    .DESCRIPTION
-        Stops the service if running and removes its service registration using sc.exe delete / CIM method.
-    .PARAMETER ComputerName
-        An array of target computer names. Defaults to 'localhost'.
-    .PARAMETER Credential
-        Optional PSCredential object for authentication.
-    .PARAMETER Name
-        Service Name to delete (e.g., 'MaliciousSvc').
-    #>
     [CmdletBinding()]
     param(
         [Parameter(ValueFromPipeline = $true)]
@@ -2986,18 +2843,6 @@ function Remove-RemoteService {
 
 # Delete a scheduled task from target computer
 function Remove-RemoteScheduledTask {
-    <#
-    .SYNOPSIS
-        Deletes a scheduled task from target computers.
-    .DESCRIPTION
-        Removes a scheduled task using Unregister-ScheduledTask with schtasks.exe fallback for legacy targets.
-    .PARAMETER ComputerName
-        An array of target computer names. Defaults to 'localhost'.
-    .PARAMETER Credential
-        Optional PSCredential object for authentication.
-    .PARAMETER TaskName
-        Name or path of the scheduled task to delete (e.g., 'PersistenceTask' or '\Microsoft\Windows\BadTask').
-    #>
     [CmdletBinding()]
     param(
         [Parameter(ValueFromPipeline = $true)]
@@ -3061,20 +2906,6 @@ function Remove-RemoteScheduledTask {
 
 # Remove registry key or value from target computer
 function Remove-RemoteRegistryKey {
-    <#
-    .SYNOPSIS
-        Removes a registry key or value property from target computers.
-    .DESCRIPTION
-        Deletes registry persistence entries or keys remotely using Remove-Item / Remove-ItemProperty.
-    .PARAMETER ComputerName
-        An array of target computer names. Defaults to 'localhost'.
-    .PARAMETER Credential
-        Optional PSCredential object for authentication.
-    .PARAMETER Path
-        The registry path (e.g., 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' or 'HKCU:\Software\Malware').
-    .PARAMETER ValueName
-        Optional value/property name to delete (e.g., 'BackdoorRunKey'). If omitted, deletes the entire registry key path.
-    #>
     [CmdletBinding()]
     param(
         [Parameter(ValueFromPipeline = $true)]
@@ -3136,30 +2967,6 @@ function Remove-RemoteRegistryKey {
 
 # Add host-based Windows Firewall rule on target computer
 function Add-RemoteFirewallRule {
-    <#
-    .SYNOPSIS
-        Adds a Windows Firewall rule on target computers to block/isolate malicious IP addresses or ports.
-    .DESCRIPTION
-        Creates a new firewall rule using New-NetFirewallRule with netsh.exe fallback for legacy Windows targets.
-    .PARAMETER ComputerName
-        An array of target computer names. Defaults to 'localhost'.
-    .PARAMETER Credential
-        Optional PSCredential object for authentication.
-    .PARAMETER Name
-        Unique rule identifier (e.g., 'IR_Block_C2_IP').
-    .PARAMETER DisplayName
-        Human-readable rule name. Defaults to Name.
-    .PARAMETER Direction
-        Inbound or Outbound. Default is 'Outbound'.
-    .PARAMETER Action
-        Block or Allow. Default is 'Block'.
-    .PARAMETER Protocol
-        TCP, UDP, or Any. Default is 'Any'.
-    .PARAMETER RemoteAddress
-        Remote IP address or CIDR subnet to block (e.g., '192.168.1.100' or '10.0.0.0/8').
-    .PARAMETER LocalPort
-        Local port number to block (e.g., '4444').
-    #>
     [CmdletBinding()]
     param(
         [Parameter(ValueFromPipeline = $true)]
