@@ -3,8 +3,8 @@
 ## Architecture Overview
 
 1. **Unified Module (`functions.psm1`)**:
-   - Contains all remote administrative, auditing, and baselining functions.
-   - All exported functions from `functions.psm1` are dynamically populated in the GUI's `ScriptSelectionComboBox`.
+   - Contains all remote administrative, auditing, baselining, and containment functions.
+   - On startup, exported functions are categorized into investigative functions (`ScriptSelectionComboBox`) and destructive remediation actions (`ContainActionComboBox`).
 
 2. **Graphical Interface (`AdminTool.ps1`)**:
    - Built with WPF (PresentationFramework) via XAML.

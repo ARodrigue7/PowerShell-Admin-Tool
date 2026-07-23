@@ -222,7 +222,9 @@ $ui.ImportFromFileButton.add_Click({
             Add-OutputLine -Text "Successfully imported $($comps.Count) computers." -Color "Green"
         } catch { Add-OutputLine -Text "Error reading file: $($_.Exception.Message)" -Color "Red" }
     }
-})#region Interactive Modal Dialogs
+})
+
+#region Interactive Modal Dialogs
 function Show-EVTXDialog {
     $xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -1089,7 +1091,7 @@ $ui.ComputerInputTextBox.add_TextChanged({ Update-ComputerListView })
 $ui.ScriptSelectionComboBox.add_SelectionChanged({
     Update-ScriptDescriptionView
     $selectedScript = $ui.ScriptSelectionComboBox.SelectedItem
-    if ($selectedScript -and ($selectedScript.Name -in @('Get-EVTX', 'Get-RemoteArtifact', 'Get-CriticalEventXML'))) {
+    if ($selectedScript -and ($selectedScript.Name -in @('Get-EVTX', 'Get-CriticalEventXML'))) {
         $ui.ArgumentsTextBox.IsEnabled = $false
         $ui.ArgumentsTextBox.ToolTip = "Parameters for '$($selectedScript.Name)' will be collected via a dedicated popup dialog."
     } else {
@@ -1170,7 +1172,7 @@ $ui.GetInfoButton.add_Click({
         } -ArgumentList $computers, $cred
         
         $Global:ActiveJobs[$job.Id] = $job
-        Add-OutputLine -Text "Job '$($job.Name)' queued." -Color "Orange"
+        Add-OutputLine -Text "Job '$($job.Name)' queued." -Color "DarkOrange"
     } catch { Add-OutputLine -Text "Failed to start job: $($_.Exception.Message)" -Color "Red" }
 })
 
@@ -1193,19 +1195,6 @@ $ui.RunScriptButton.add_Click({
         }
         $extraParams['LogCategory'] = $evtxRes.LogCategory
         if ($evtxRes.CustomLogs) { $extraParams['CustomLogs'] = $evtxRes.CustomLogs }
-    }
-    elseif ($funcName -eq 'Get-RemoteArtifact') {
-        $artRes = Show-RemoteArtifactDialog
-        if ($null -eq $artRes) {
-            Add-OutputLine -Text "Get-RemoteArtifact execution cancelled by operator." -Color "DarkGoldenrod"
-            return
-        }
-        $extraParams['Path']        = $artRes.Path
-        $extraParams['Type']        = $artRes.Type
-        $extraParams['ZipPassword'] = $artRes.ZipPassword
-        if ($artRes.CleanRemote) {
-            $extraParams['CleanRemote'] = $true
-        }
     }
     elseif ($funcName -eq 'Get-CriticalEventXML') {
         $dateRes = Show-CriticalEventXMLDialog
@@ -1308,7 +1297,7 @@ $ui.RunScriptButton.add_Click({
 
         if ($job) {
             $Global:ActiveJobs[$job.Id] = $job
-            Add-OutputLine -Text "Job '$($job.Name)' (ID: $($job.Id)) queued successfully." -Color "Orange"
+            Add-OutputLine -Text "Job '$($job.Name)' (ID: $($job.Id)) queued successfully." -Color "DarkOrange"
         } else {
             Add-OutputLine -Text "Failed to start background job." -Color "Red"
         }

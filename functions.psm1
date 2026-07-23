@@ -991,11 +991,11 @@ function Get-CriticalEventXML
     Process
     {   
         
-        $local_path = ($env:USERPROFILE + '\AppData\Local\Temp\XML\') # directory where XML files will be stored on your machine
-       
+        $toolRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Get-Location }
+        $local_path = Join-Path $toolRoot "Output/EventXML"
         if (-not (Test-Path -Path $local_path -PathType Container)) {
-            New-Item -Path ($env:USERPROFILE + '\AppData\Local\Temp') -Name XML -ItemType Directory
-        } # create the dir if it doesn't exist
+            New-Item -Path $local_path -ItemType Directory -Force | Out-Null
+        }
 
         $num = 0 # Used to make sure there is a unique name for each file created
 
