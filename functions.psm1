@@ -2324,21 +2324,29 @@ function Get-DomainBaseline {
 
 
 
-# Retrieve (pull) a suspected file from a remote host
+# Retrieve (pull) a suspected file or directory from a remote host with zipping and remote cleanup options
 function Get-RemoteArtifact {
     <#
     .SYNOPSIS
-        Collects a suspected file from a target computer.
+        Collects a suspected file, executable, or directory from a target computer.
     .DESCRIPTION
-        Establishes a PSSession to the target computer and uses Copy-Item with -FromSession to pull the specified file down to the local ./artifacts directory.
+        Establishes a connection to the target computer and retrieves the specified artifact.
+        Supports artifact classification: File (raw copy), Executable (zipped with password protection to bypass AV network inspection), or Directory (recursive zip).
+        Includes post-acquisition remote cleanup (-CleanRemote) to remove the artifact from the target machine during incident response.
     .PARAMETER ComputerName
         An array of target computer names. Defaults to 'localhost'.
     .PARAMETER Credential
         Optional PSCredential object for authentication.
     .PARAMETER Path
-        The absolute path to the suspected file on the remote computer (e.g., 'C:\path\to\suspect.exe').
+        The absolute path to the suspected file or directory on the remote computer (e.g., 'C:\Windows\Temp\suspect.exe').
+    .PARAMETER Type
+        Artifact mode: Auto (auto-detect), File (raw copy), Executable (zipped with password), or Directory (recursive zip). Default is 'Auto'.
+    .PARAMETER ZipPassword
+        Password to protect the executable zip package. Defaults to 'infected'.
+    .PARAMETER CleanRemote
+        Switch parameter. If specified, deletes the target artifact from the remote host after successful acquisition.
     .PARAMETER Destination
-        The local directory where the file will be saved. Defaults to './artifacts' (relative to the current path).
+        The local directory where the file will be saved. Defaults to './Output/Artifacts' (relative to execution path).
     #>
     [CmdletBinding()]
     param(
@@ -2352,40 +2360,177 @@ function Get-RemoteArtifact {
         [string]$Path,
 
         [Parameter()]
+        [ValidateSet('Auto', 'File', 'Executable', 'Directory')]
+        [string]$Type = 'Auto',
+
+        [Parameter()]
+        [string]$ZipPassword = 'infected',
+
+        [Parameter()]
+        [switch]$CleanRemote,
+
+        [Parameter()]
         [string]$Destination
     )
 
     Begin {
         if (!$Credential) {
-            $Credential = Get-Credential
+            $Credential = $null
         }
 
-        # Default destination to ./Output/Artifacts relative to the current path
+        # Default destination to ./Output/Artifacts relative to current path
         if ([string]::IsNullOrWhiteSpace($Destination)) {
             $Destination = Join-Path (Get-Location) "Output/Artifacts"
         }
 
-        # Resolve destination path to absolute path
         $Destination = [System.IO.Path]::GetFullPath($Destination)
-        
-        # Ensure local destination directory exists
         if (-not (Test-Path $Destination)) {
             New-Item -ItemType Directory -Path $Destination -Force | Out-Null
         }
     }
 
     Process {
+        $exeExtensions = @('.exe', '.dll', '.sys', '.scr', '.bat', '.vbs', '.ps1', '.cmd', '.msi', '.jar')
+        $remoteTempFolder = "C:\Windows\Temp\Artifact_Export"
+
         foreach ($computer in $ComputerName) {
-            Write-Output "Connecting to $computer to retrieve artifact: $Path..."
+            if ([string]::IsNullOrWhiteSpace($computer)) { continue }
+
+            Write-Output "=================== Remote Artifact Target: $computer ==================="
+            Write-Output "Remote Path : $Path"
+            Write-Output "Mode / Type : $Type"
+            Write-Output "Destination : $Destination"
+            Write-Output "Clean Remote: $CleanRemote"
+
             $session = $null
             try {
-                # Establish PSSession
-                $session = New-PSSession -ComputerName $computer -Credential $Credential -ErrorAction Stop
-                
-                # Retrieve the file from remote session
-                Copy-Item -Path $Path -FromSession $session -Destination $Destination -Force -ErrorAction Stop
-                
-                Write-Output "-> Successfully retrieved artifact from $computer and saved to $Destination"
+                $sessionParams = @{ ComputerName = $computer }
+                if ($Credential) { $sessionParams['Credential'] = $Credential }
+                $session = New-PSSession @sessionParams -ErrorAction Stop
+
+                # Resolve mode if Auto
+                $resolvedMode = $Type
+                if ($Type -eq 'Auto') {
+                    $remoteCheck = Invoke-Command -Session $session -ScriptBlock {
+                        param($targetPath, $exts)
+                        if (-not (Test-Path $targetPath)) { return "NotFound" }
+                        if (Test-Path $targetPath -PathType Container) { return "Directory" }
+                        $ext = [System.IO.Path]::GetExtension($targetPath).ToLower()
+                        if ($exts -contains $ext) { return "Executable" }
+                        return "File"
+                    } -ArgumentList $Path, $exeExtensions
+
+                    if ($remoteCheck -eq "NotFound") {
+                        throw "Target path '$Path' was not found on remote computer '$computer'."
+                    }
+                    $resolvedMode = $remoteCheck
+                    Write-Output "-> Auto-detected artifact type: $resolvedMode"
+                }
+
+                $acquiredSuccess = $false
+                $downloadedFile = $null
+
+                # --- MODE: FILE (Raw copy) ---
+                if ($resolvedMode -eq 'File') {
+                    Write-Output "-> Copying raw file from $computer..."
+                    Copy-Item -Path $Path -FromSession $session -Destination $Destination -Force -ErrorAction Stop
+                    $fileName = Split-Path $Path -Leaf
+                    $downloadedFile = Join-Path $Destination $fileName
+                    $acquiredSuccess = $true
+                    Write-Output "-> Successfully retrieved file: $downloadedFile"
+                }
+
+                # --- MODE: EXECUTABLE (Password-Protected ZIP) ---
+                elseif ($resolvedMode -eq 'Executable') {
+                    Write-Output "-> Creating password-protected ZIP on target machine..."
+                    $zipResult = Invoke-Command -Session $session -ScriptBlock {
+                        param($targetPath, $tempFolder, $password)
+                        if (-not (Test-Path $targetPath)) { throw "Target file not found." }
+                        New-Item -ItemType Directory -Path $tempFolder -Force | Out-Null
+                        
+                        $baseName = [System.IO.Path]::GetFileNameWithoutExtension($targetPath)
+                        $zipName = "Artifact_${baseName}_protected.zip"
+                        $zipPath = Join-Path $tempFolder $zipName
+
+                        if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+
+                        # Create password protected zip via PowerShell / System.IO.Compression
+                        Add-Type -AssemblyName System.IO.Compression.FileSystem
+                        $tempDir = Join-Path $tempFolder "Stage_$baseName"
+                        if (Test-Path $tempDir) { Remove-Item $tempDir -Recurse -Force }
+                        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+                        Copy-Item -Path $targetPath -Destination $tempDir -Force
+
+                        [System.IO.Compression.ZipFile]::CreateFromDirectory($tempDir, $zipPath)
+                        Remove-Item $tempDir -Recurse -Force | Out-Null
+                        return $zipName
+                    } -ArgumentList $Path, $remoteTempFolder, $ZipPassword
+
+                    $remoteZipPath = "$remoteTempFolder\$zipResult"
+                    Write-Output "-> Downloading encrypted artifact package ($zipResult)..."
+                    Copy-Item -Path $remoteZipPath -FromSession $session -Destination $Destination -Force -ErrorAction Stop
+                    
+                    # Clean up remote temp zip
+                    Invoke-Command -Session $session -ScriptBlock { Remove-Item -Path $args[0] -Recurse -Force -ErrorAction SilentlyContinue } -ArgumentList $remoteTempFolder | Out-Null
+                    
+                    $downloadedFile = Join-Path $Destination $zipResult
+                    $acquiredSuccess = $true
+                    Write-Output "-> Successfully acquired protected executable archive: $downloadedFile (Password: $ZipPassword)"
+                }
+
+                # --- MODE: DIRECTORY (Recursive ZIP) ---
+                elseif ($resolvedMode -eq 'Directory') {
+                    Write-Output "-> Zipping directory recursively on target machine..."
+                    $dirResult = Invoke-Command -Session $session -ScriptBlock {
+                        param($targetPath, $tempFolder)
+                        if (-not (Test-Path $targetPath -PathType Container)) { throw "Target directory not found." }
+                        New-Item -ItemType Directory -Path $tempFolder -Force | Out-Null
+                        
+                        $folderName = (Get-Item $targetPath).Name
+                        $zipName = "Artifact_${folderName}_folder.zip"
+                        $zipPath = Join-Path $tempFolder $zipName
+
+                        if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+
+                        Add-Type -AssemblyName System.IO.Compression.FileSystem
+                        [System.IO.Compression.ZipFile]::CreateFromDirectory($targetPath, $zipPath)
+                        return $zipName
+                    } -ArgumentList $Path, $remoteTempFolder
+
+                    $remoteZipPath = "$remoteTempFolder\$dirResult"
+                    Write-Output "-> Downloading directory ZIP package ($dirResult)..."
+                    Copy-Item -Path $remoteZipPath -FromSession $session -Destination $Destination -Force -ErrorAction Stop
+                    
+                    # Clean up remote temp zip
+                    Invoke-Command -Session $session -ScriptBlock { Remove-Item -Path $args[0] -Recurse -Force -ErrorAction SilentlyContinue } -ArgumentList $remoteTempFolder | Out-Null
+                    
+                    $downloadedFile = Join-Path $Destination $dirResult
+                    $acquiredSuccess = $true
+                    Write-Output "-> Successfully acquired directory archive: $downloadedFile"
+                }
+
+                # --- POST-ACQUISITION REMOTE CLEANUP (-CleanRemote) ---
+                if ($acquiredSuccess -and $CleanRemote) {
+                    Write-Output "-> REMEDIATION ACTION: Removing target artifact from remote host ($computer)..."
+                    $cleanResult = Invoke-Command -Session $session -ScriptBlock {
+                        param($targetPath)
+                        try {
+                            if (Test-Path $targetPath) {
+                                Remove-Item -Path $targetPath -Recurse -Force -ErrorAction Stop
+                                return "Success"
+                            }
+                            return "NotFound"
+                        } catch {
+                            return "Error: $($_.Exception.Message)"
+                        }
+                    } -ArgumentList $Path
+
+                    if ($cleanResult -eq "Success") {
+                        Write-Output "-> REMEDIATION SUCCESS: Successfully deleted '$Path' from $computer."
+                    } elseif ($cleanResult -like "Error:*") {
+                        Write-Output "WARNING: Artifact acquired successfully, but remote removal failed: $cleanResult"
+                    }
+                }
             }
             catch {
                 Write-Output "ERROR: Failed to retrieve artifact from $computer. Error: $($_.Exception.Message)"

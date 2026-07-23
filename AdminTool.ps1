@@ -284,18 +284,39 @@ function Show-RemoteArtifactDialog {
     $xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Get-RemoteArtifact Target File" Height="200" Width="480" WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+        Title="Get-RemoteArtifact Target File &amp; Remediation" Height="360" Width="520" WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
     <Grid Margin="15">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <TextBlock Grid.Row="0" Text="Remote File Path to Retrieve:" FontWeight="Bold" FontSize="14" Margin="0,0,0,3"/>
-        <TextBlock Grid.Row="1" Text="Example: C:\Windows\Temp\suspect.exe" Foreground="Gray" Margin="0,0,0,10"/>
-        <TextBox Name="TxtPath" Grid.Row="2" Height="25" VerticalAlignment="Top"/>
-        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+        <TextBlock Grid.Row="0" Text="Remote Path to Retrieve:" FontWeight="Bold" FontSize="14" Margin="0,0,0,3"/>
+        <TextBlock Grid.Row="1" Text="Example: C:\Windows\Temp\suspect.exe or C:\Users\Public\Logs" Foreground="Gray" Margin="0,0,0,10"/>
+        <TextBox Name="TxtPath" Grid.Row="2" Height="25" Margin="0,0,0,10"/>
+        
+        <TextBlock Grid.Row="3" Text="Artifact Type / Handling Mode:" FontWeight="Bold" Margin="0,0,0,5"/>
+        <StackPanel Grid.Row="4" Orientation="Horizontal" Margin="5,0,0,10">
+            <RadioButton Name="RbAuto" Content="Auto-Detect" IsChecked="True" Margin="0,0,15,0"/>
+            <RadioButton Name="RbFile" Content="File (Raw)" Margin="0,0,15,0"/>
+            <RadioButton Name="RbExe" Content="Executable (Protected ZIP)" Margin="0,0,15,0"/>
+            <RadioButton Name="RbDir" Content="Directory (ZIP)" Margin="0,0,0,0"/>
+        </StackPanel>
+
+        <Grid Grid.Row="5" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="110"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="ZIP Password:" VerticalAlignment="Center"/>
+            <TextBox Name="TxtZipPassword" Grid.Column="1" Text="infected" Height="25"/>
+        </Grid>
+
+        <CheckBox Name="ChkCleanRemote" Grid.Row="6" Content="Clean / Delete target from remote host after acquisition" Foreground="Red" FontWeight="Bold" VerticalAlignment="Center"/>
+
+        <StackPanel Grid.Row="7" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,15,0,0">
             <Button Name="BtnOK" Content="Pull Artifact" Width="100" Height="30" IsDefault="True" Margin="0,0,10,0"/>
             <Button Name="BtnCancel" Content="Cancel" Width="80" Height="30" IsCancel="True"/>
         </StackPanel>
@@ -308,15 +329,52 @@ function Show-RemoteArtifactDialog {
         $dlg = [Windows.Markup.XamlReader]::Load($reader)
         if ($ui.Window) { $dlg.Owner = $ui.Window }
         
-        $txtPath = $dlg.FindName("TxtPath")
-        $btnOK = $dlg.FindName("BtnOK")
+        $txtPath        = $dlg.FindName("TxtPath")
+        $rbAuto         = $dlg.FindName("RbAuto")
+        $rbFile         = $dlg.FindName("RbFile")
+        $rbExe          = $dlg.FindName("RbExe")
+        $rbDir          = $dlg.FindName("RbDir")
+        $txtZipPassword = $dlg.FindName("TxtZipPassword")
+        $chkCleanRemote = $dlg.FindName("ChkCleanRemote")
+        $btnOK          = $dlg.FindName("BtnOK")
         
+        $rbExe.add_Checked({ $txtZipPassword.IsEnabled = $true })
+        $rbFile.add_Checked({ $txtZipPassword.IsEnabled = $false })
+        $rbDir.add_Checked({ $txtZipPassword.IsEnabled = $false })
+        $rbAuto.add_Checked({ $txtZipPassword.IsEnabled = $true })
+
         $btnOK.add_Click({
             if ([string]::IsNullOrWhiteSpace($txtPath.Text)) {
                 [System.Windows.MessageBox]::Show("Remote file path cannot be empty.", "Validation Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
                 return
             }
-            $script:artifactResult = $txtPath.Text.Trim()
+
+            $mode = "Auto"
+            if ($rbFile.IsChecked) { $mode = "File" }
+            elseif ($rbExe.IsChecked) { $mode = "Executable" }
+            elseif ($rbDir.IsChecked) { $mode = "Directory" }
+
+            if (($mode -eq "Executable" -or $mode -eq "Auto") -and [string]::IsNullOrWhiteSpace($txtZipPassword.Text)) {
+                [System.Windows.MessageBox]::Show("Please specify a password to protect the executable ZIP archive.", "Validation Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+                return
+            }
+
+            if ($chkCleanRemote.IsChecked) {
+                $confirm = [System.Windows.MessageBox]::Show(
+                    "WARNING: You have selected to DELETE the target artifact '$($txtPath.Text)' from the remote host after acquisition.`n`nAre you sure you want to proceed with remote remediation?",
+                    "Confirm Remote Artifact Removal",
+                    [System.Windows.MessageBoxButton]::YesNo,
+                    [System.Windows.MessageBoxImage]::Warning
+                )
+                if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+            }
+
+            $script:artifactResult = @{
+                Path        = $txtPath.Text.Trim()
+                Type        = $mode
+                ZipPassword = $txtZipPassword.Text.Trim()
+                CleanRemote = [bool]$chkCleanRemote.IsChecked
+            }
             $dlg.DialogResult = $true
             $dlg.Close()
         })
@@ -503,12 +561,17 @@ $ui.RunScriptButton.add_Click({
         if ($evtxRes.CustomLogs) { $extraParams['CustomLogs'] = $evtxRes.CustomLogs }
     }
     elseif ($funcName -eq 'Get-RemoteArtifact') {
-        $artifactPath = Show-RemoteArtifactDialog
-        if ([string]::IsNullOrWhiteSpace($artifactPath)) {
+        $artRes = Show-RemoteArtifactDialog
+        if ($null -eq $artRes) {
             Add-OutputLine -Text "Get-RemoteArtifact execution cancelled by operator." -Color "Yellow"
             return
         }
-        $extraParams['Path'] = $artifactPath
+        $extraParams['Path']        = $artRes.Path
+        $extraParams['Type']        = $artRes.Type
+        $extraParams['ZipPassword'] = $artRes.ZipPassword
+        if ($artRes.CleanRemote) {
+            $extraParams['CleanRemote'] = $true
+        }
     }
     elseif ($funcName -eq 'Get-CriticalEventXML') {
         $dateRes = Show-CriticalEventXMLDialog

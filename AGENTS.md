@@ -42,9 +42,10 @@
    - Supports presets: `DFIR` (Security, System, Application, PowerShell, Sysmon), `All` (winevt log store), or `Custom`.
    - Uses remote `wevtutil epl` to export active logs cleanly without file lock failures.
 
-7. **Interactive GUI Modal Dialogs**:
+7. **Interactive GUI Modal Dialogs & Remote Artifact Collection**:
    - `AdminTool.ps1` dynamically disables the generic `ArgumentsTextBox` for functions requiring specific input parameters (`Get-EVTX`, `Get-RemoteArtifact`, `Get-CriticalEventXML`).
-   - Modal WPF dialogs pop up upon clicking "Execute Function" to guide the operator cleanly through selecting log presets, artifact paths, or date range filters.
+   - `Get-RemoteArtifact` supports artifact modes (`Auto`, `File`, `Executable`, `Directory`). Executables are zipped and password-protected (default `infected` or custom prompt) on the target before transfer to bypass AV/EDR inspection. Directories are compressed into `.zip` packages for single-pass transfer.
+   - `Get-RemoteArtifact` supports post-acquisition remediation cleanup (`-CleanRemote`). If checked in the GUI popup, a confirmation warning is displayed before removing the target artifact from the remote host.
 
 8. **Timestamp Standard**:
    - All timestamp properties in output custom objects MUST use the standard ISO 8601 format:

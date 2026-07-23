@@ -8,7 +8,8 @@ A self-contained, module-based PowerShell WPF application for remote system admi
 
 *   **Module-Based Architecture**: Automatically imports all custom administrative functions from a unified local module (`functions.psm1`). Functions are automatically populated in the UI dropdown.
 *   **Forensic EVTX Collection Engine**: Upgraded `Get-EVTX` with multi-protocol extraction (SMB -> WinRM -> WMI), log category presets (`DFIR`, `All`, `Custom`), and lock-free `wevtutil` remote exports.
-*   **Interactive Modal Popups**: Smart GUI popups for `Get-EVTX` (preset picker), `Get-RemoteArtifact` (remote path prompt), and `Get-CriticalEventXML` (date-range filter), keeping operator workflow intuitive.
+*   **Artifact Acquisition & Remediation**: Upgraded `Get-RemoteArtifact` with mode classification (`File`, `Executable` with password-protected ZIP to bypass AV/EDR network inspection, `Directory` ZIP), and post-acquisition remote target deletion (`-CleanRemote`) for incident response clearing actions.
+*   **Interactive Modal Popups**: Smart GUI popups for `Get-EVTX` (preset picker), `Get-RemoteArtifact` (type/password/remediation prompt), and `Get-CriticalEventXML` (date-range filter), keeping operator workflow intuitive.
 *   **Unified Relative Output Hierarchy**: All baselines, EVTX logs, and pulled artifacts are saved relative to the tool directory under `./Output/` (`./Output/EVTX_Logs/`, `./Output/Baselines/`, `./Output/Artifacts/`).
 *   **Asynchronous Background Execution**: Run administrative queries in parallel as background processes using `Start-Job`, keeping the user interface completely responsive and preventing freezes.
 *   **Real-Time Job Monitoring**: Active background jobs are monitored and collected via a dispatcher timer. Output (including remote computer names and any error records) is formatted and streamed directly to the Global Output Console upon completion.
