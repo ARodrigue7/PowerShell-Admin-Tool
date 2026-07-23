@@ -2543,3 +2543,720 @@ function Get-RemoteArtifact {
         }
     }
 }
+
+# Reset password for compromised Active Directory user accounts
+function Reset-ADUserPassword {
+    <#
+    .SYNOPSIS
+        Force-resets passwords for compromised Active Directory user accounts.
+    .DESCRIPTION
+        Connects to a Domain Controller or domain target and resets user account passwords.
+        Supports auto-generating strong 20-character complex passwords if not specified.
+        Uses ADSI searcher fallback so it works on any domain host without requiring RSAT.
+        Unlocks locked accounts and sets pwdLastSet = 0 to require password change at next logon.
+    .PARAMETER ComputerName
+        An array of target computer names or Domain Controllers. Defaults to 'localhost'.
+    .PARAMETER Credential
+        Optional PSCredential object for domain administrative authentication.
+    .PARAMETER Identity
+        An array of target usernames / sAMAccountNames to reset.
+    .PARAMETER NewPassword
+        Optional custom password string. If blank or omitted, a strong 20-character password is generated.
+    .PARAMETER MustChangePassword
+        Switch parameter. Forces user to change password at next logon. Default is $true.
+    .PARAMETER UnlockAccount
+        Switch parameter. Unlocks account if locked. Default is $true.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromPipeline = $true)]
+        [string[]]$ComputerName = @("localhost"),
+
+        [Parameter()]
+        [System.Management.Automation.PSCredential]$Credential,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$Identity,
+
+        [Parameter()]
+        [string]$NewPassword,
+
+        [Parameter()]
+        [switch]$MustChangePassword = $true,
+
+        [Parameter()]
+        [switch]$UnlockAccount = $true
+    )
+
+    Begin {
+        if (!$Credential) { $Credential = $null }
+
+        # Auto-generate password if empty
+        function New-ComplexPassword {
+            $u = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+            $l = "abcdefghijkmnopqrstuvwxyz"
+            $n = "23456789"
+            $s = "!@#$%^&*()-_=+"
+            $all = $u + $l + $n + $s
+            $rnd = New-Object System.Random
+            $pwd = @(
+                $u[$rnd.Next($u.Length)],
+                $l[$rnd.Next($l.Length)],
+                $n[$rnd.Next($n.Length)],
+                $s[$rnd.Next($s.Length)]
+            )
+            for ($i = 0; $i -lt 16; $i++) {
+                $pwd += $all[$rnd.Next($all.Length)]
+            }
+            return ($pwd | Sort-Object { $rnd.Next() }) -join ''
+        }
+
+        if ([string]::IsNullOrWhiteSpace($NewPassword)) {
+            $NewPassword = New-ComplexPassword
+            Write-Output "-> Auto-generated complex password: $NewPassword"
+        }
+    }
+
+    Process {
+        foreach ($computer in $ComputerName) {
+            if ([string]::IsNullOrWhiteSpace($computer)) { continue }
+
+            Write-Output "=================== Reset AD Password Target: $computer ==================="
+            
+            Invoke-Command -ComputerName $computer -Credential $Credential -ScriptBlock {
+                param($users, $pwd, $mustChange, $unlock)
+
+                foreach ($user in $users) {
+                    if ([string]::IsNullOrWhiteSpace($user)) { continue }
+                    $cleanUser = $user.Trim()
+                    try {
+                        # Primary: Check if ActiveDirectory module is available
+                        if (Get-Module -ListAvailable -Name ActiveDirectory) {
+                            Import-Module ActiveDirectory -ErrorAction SilentlyContinue
+                            $secPwd = ConvertTo-SecureString $pwd -AsPlainText -Force
+                            Set-ADAccountPassword -Identity $cleanUser -NewPassword $secPwd -Reset -ErrorAction Stop
+                            if ($mustChange) { Set-ADUser -Identity $cleanUser -ChangePasswordAtLogon $true -ErrorAction SilentlyContinue }
+                            if ($unlock) { Unlock-ADAccount -Identity $cleanUser -ErrorAction SilentlyContinue }
+                        } else {
+                            # Fallback: Native ADSI LDAP searcher
+                            $searcher = [adsisearcher]"(sAMAccountName=$cleanUser)"
+                            $result = $searcher.FindOne()
+                            if (-not $result) { throw "User '$cleanUser' not found in Active Directory." }
+                            $de = $result.GetDirectoryEntry()
+                            $de.SetPassword($pwd)
+                            if ($mustChange) { $de.pwdLastSet = 0 }
+                            if ($unlock) { $de.IsAccountLocked = $false }
+                            $de.SetInfo()
+                        }
+
+                        [PSCustomObject]@{
+                            Username           = $cleanUser
+                            Status             = "Success"
+                            NewPassword        = $pwd
+                            MustChangeAtLogon = $mustChange
+                            AccountUnlocked    = $unlock
+                            Timestamp          = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                        }
+                    } catch {
+                        [PSCustomObject]@{
+                            Username           = $cleanUser
+                            Status             = "Failed: $($_.Exception.Message)"
+                            NewPassword        = $null
+                            MustChangeAtLogon = $false
+                            AccountUnlocked    = $false
+                            Timestamp          = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                        }
+                    }
+                }
+            } -ArgumentList $Identity, $NewPassword, [bool]$MustChangePassword, [bool]$UnlockAccount
+        }
+    }
+}
+
+# Terminate running process on target host
+function Stop-RemoteProcess {
+    <#
+    .SYNOPSIS
+        Terminates a process on target computers by Process Name or PID.
+    .DESCRIPTION
+        Kills matching processes remotely using Stop-Process with CIM/WMI fallback for legacy targets.
+    .PARAMETER ComputerName
+        An array of target computer names. Defaults to 'localhost'.
+    .PARAMETER Credential
+        Optional PSCredential object for authentication.
+    .PARAMETER ProcessName
+        Name of the process to terminate (e.g., 'malware.exe' or 'mimikatz').
+    .PARAMETER ProcessId
+        PID of the specific process to terminate.
+    .PARAMETER Force
+        Switch parameter. Forces termination of target process. Default is $true.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromPipeline = $true)]
+        [string[]]$ComputerName = @("localhost"),
+
+        [Parameter()]
+        [System.Management.Automation.PSCredential]$Credential,
+
+        [Parameter()]
+        [string]$ProcessName,
+
+        [Parameter()]
+        [int]$ProcessId,
+
+        [Parameter()]
+        [switch]$Force = $true
+    )
+
+    Process {
+        foreach ($computer in $ComputerName) {
+            if ([string]::IsNullOrWhiteSpace($computer)) { continue }
+
+            Write-Output "=================== Stop Process Target: $computer ==================="
+            
+            Invoke-Command -ComputerName $computer -Credential $Credential -ScriptBlock {
+                param($name, $pidVal, $forceKill)
+
+                $targets = @()
+                if ($pidVal -gt 0) {
+                    $targets = Get-Process -Id $pidVal -ErrorAction SilentlyContinue
+                } elseif (-not [string]::IsNullOrWhiteSpace($name)) {
+                    $cleanName = ($name -replace '\.exe$', '').Trim()
+                    $targets = Get-Process -Name $cleanName -ErrorAction SilentlyContinue
+                }
+
+                if (-not $targets) {
+                    Write-Output "No matching processes found on target."
+                    return
+                }
+
+                foreach ($proc in $targets) {
+                    try {
+                        Stop-Process -Id $proc.Id -Force:$forceKill -ErrorAction Stop
+                        [PSCustomObject]@{
+                            ProcessName = $proc.ProcessName
+                            PID         = $proc.Id
+                            Status      = "Terminated"
+                            Timestamp   = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                        }
+                    } catch {
+                        # WMI / CIM fallback
+                        try {
+                            $useCim = [bool](Get-Command Get-CimInstance -ErrorAction SilentlyContinue)
+                            if ($useCim) {
+                                Invoke-CimMethod -Query "SELECT * FROM Win32_Process WHERE ProcessId = $($proc.Id)" -MethodName Terminate | Out-Null
+                            } else {
+                                (Get-WmiObject -Class Win32_Process -Filter "ProcessId = $($proc.Id)").Terminate() | Out-Null
+                            }
+                            [PSCustomObject]@{
+                                ProcessName = $proc.ProcessName
+                                PID         = $proc.Id
+                                Status      = "Terminated (WMI/CIM Fallback)"
+                                Timestamp   = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                            }
+                        } catch {
+                            [PSCustomObject]@{
+                                ProcessName = $proc.ProcessName
+                                PID         = $proc.Id
+                                Status      = "Failed: $($_.Exception.Message)"
+                                Timestamp   = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                            }
+                        }
+                    }
+                }
+            } -ArgumentList $ProcessName, $ProcessId, [bool]$Force
+        }
+    }
+}
+
+# Remove file or directory from remote target
+function Remove-RemoteItem {
+    <#
+    .SYNOPSIS
+        Deletes a file or directory from target computers.
+    .DESCRIPTION
+        Removes files or directories remotely using Remove-Item with optional recursive deletion.
+    .PARAMETER ComputerName
+        An array of target computer names. Defaults to 'localhost'.
+    .PARAMETER Credential
+        Optional PSCredential object for authentication.
+    .PARAMETER Path
+        The absolute path to the file or directory on the target computer (e.g., 'C:\Windows\Temp\malware.exe').
+    .PARAMETER Recurse
+        Switch parameter. Recursively deletes directory contents. Default is $true.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromPipeline = $true)]
+        [string[]]$ComputerName = @("localhost"),
+
+        [Parameter()]
+        [System.Management.Automation.PSCredential]$Credential,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter()]
+        [switch]$Recurse = $true
+    )
+
+    Process {
+        foreach ($computer in $ComputerName) {
+            if ([string]::IsNullOrWhiteSpace($computer)) { continue }
+
+            Write-Output "=================== Remove Item Target: $computer ==================="
+            
+            Invoke-Command -ComputerName $computer -Credential $Credential -ScriptBlock {
+                param($targetPath, $doRecurse)
+
+                if (-not (Test-Path $targetPath)) {
+                    [PSCustomObject]@{
+                        Path      = $targetPath
+                        Status    = "NotFound"
+                        Timestamp = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                    }
+                    return
+                }
+
+                try {
+                    Remove-Item -Path $targetPath -Recurse:$doRecurse -Force -ErrorAction Stop
+                    [PSCustomObject]@{
+                        Path      = $targetPath
+                        Status    = "Deleted"
+                        Timestamp = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                    }
+                } catch {
+                    [PSCustomObject]@{
+                        Path      = $targetPath
+                        Status    = "Failed: $($_.Exception.Message)"
+                        Timestamp = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                    }
+                }
+            } -ArgumentList $Path, [bool]$Recurse
+        }
+    }
+}
+
+# Stop a Windows service on target computer
+function Stop-RemoteService {
+    <#
+    .SYNOPSIS
+        Stops a running Windows service on target computers.
+    .DESCRIPTION
+        Stops the specified service using Stop-Service -Force with CIM/WMI fallback for legacy targets.
+    .PARAMETER ComputerName
+        An array of target computer names. Defaults to 'localhost'.
+    .PARAMETER Credential
+        Optional PSCredential object for authentication.
+    .PARAMETER Name
+        Service Name or Display Name to stop (e.g., 'Spooler' or 'wuauserv').
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromPipeline = $true)]
+        [string[]]$ComputerName = @("localhost"),
+
+        [Parameter()]
+        [System.Management.Automation.PSCredential]$Credential,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    Process {
+        foreach ($computer in $ComputerName) {
+            if ([string]::IsNullOrWhiteSpace($computer)) { continue }
+
+            Write-Output "=================== Stop Service Target: $computer ==================="
+            
+            Invoke-Command -ComputerName $computer -Credential $Credential -ScriptBlock {
+                param($serviceName)
+
+                $cleanName = $serviceName.Trim()
+                try {
+                    $svc = Get-Service -Name $cleanName -ErrorAction SilentlyContinue
+                    if (-not $svc) {
+                        $svc = Get-Service -DisplayName $cleanName -ErrorAction SilentlyContinue
+                    }
+                    if (-not $svc) {
+                        [PSCustomObject]@{
+                            ServiceName = $cleanName
+                            Status      = "NotFound"
+                            Timestamp   = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                        }
+                        return
+                    }
+
+                    Stop-Service -Name $svc.Name -Force -ErrorAction Stop
+                    [PSCustomObject]@{
+                        ServiceName = $svc.Name
+                        DisplayName = $svc.DisplayName
+                        Status      = "Stopped"
+                        Timestamp   = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                    }
+                } catch {
+                    # WMI / CIM fallback
+                    try {
+                        $useCim = [bool](Get-Command Get-CimInstance -ErrorAction SilentlyContinue)
+                        if ($useCim) {
+                            Invoke-CimMethod -Query "SELECT * FROM Win32_Service WHERE Name = '$cleanName'" -MethodName StopService | Out-Null
+                        } else {
+                            (Get-WmiObject -Class Win32_Service -Filter "Name = '$cleanName'").StopService() | Out-Null
+                        }
+                        [PSCustomObject]@{
+                            ServiceName = $cleanName
+                            Status      = "Stopped (WMI/CIM Fallback)"
+                            Timestamp   = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                        }
+                    } catch {
+                        [PSCustomObject]@{
+                            ServiceName = $cleanName
+                            Status      = "Failed: $($_.Exception.Message)"
+                            Timestamp   = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                        }
+                    }
+                }
+            } -ArgumentList $Name
+        }
+    }
+}
+
+# Remove/delete a Windows service from target computer
+function Remove-RemoteService {
+    <#
+    .SYNOPSIS
+        Deletes a Windows service entirely from target computers.
+    .DESCRIPTION
+        Stops the service if running and removes its service registration using sc.exe delete / CIM method.
+    .PARAMETER ComputerName
+        An array of target computer names. Defaults to 'localhost'.
+    .PARAMETER Credential
+        Optional PSCredential object for authentication.
+    .PARAMETER Name
+        Service Name to delete (e.g., 'MaliciousSvc').
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromPipeline = $true)]
+        [string[]]$ComputerName = @("localhost"),
+
+        [Parameter()]
+        [System.Management.Automation.PSCredential]$Credential,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    Process {
+        foreach ($computer in $ComputerName) {
+            if ([string]::IsNullOrWhiteSpace($computer)) { continue }
+
+            Write-Output "=================== Remove Service Target: $computer ==================="
+            
+            Invoke-Command -ComputerName $computer -Credential $Credential -ScriptBlock {
+                param($serviceName)
+
+                $cleanName = $serviceName.Trim()
+                try {
+                    # Stop service first if running
+                    $svc = Get-Service -Name $cleanName -ErrorAction SilentlyContinue
+                    if ($svc -and $svc.Status -eq 'Running') {
+                        Stop-Service -Name $cleanName -Force -ErrorAction SilentlyContinue
+                    }
+
+                    # Remove service via sc.exe or CIM
+                    $scRes = cmd.exe /c "sc.exe delete `"$cleanName`"" 2>&1
+                    [PSCustomObject]@{
+                        ServiceName = $cleanName
+                        Status      = "Deleted ($($scRes -join ' '))"
+                        Timestamp   = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                    }
+                } catch {
+                    [PSCustomObject]@{
+                        ServiceName = $cleanName
+                        Status      = "Failed: $($_.Exception.Message)"
+                        Timestamp   = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                    }
+                }
+            } -ArgumentList $Name
+        }
+    }
+}
+
+# Delete a scheduled task from target computer
+function Remove-RemoteScheduledTask {
+    <#
+    .SYNOPSIS
+        Deletes a scheduled task from target computers.
+    .DESCRIPTION
+        Removes a scheduled task using Unregister-ScheduledTask with schtasks.exe fallback for legacy targets.
+    .PARAMETER ComputerName
+        An array of target computer names. Defaults to 'localhost'.
+    .PARAMETER Credential
+        Optional PSCredential object for authentication.
+    .PARAMETER TaskName
+        Name or path of the scheduled task to delete (e.g., 'PersistenceTask' or '\Microsoft\Windows\BadTask').
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromPipeline = $true)]
+        [string[]]$ComputerName = @("localhost"),
+
+        [Parameter()]
+        [System.Management.Automation.PSCredential]$Credential,
+
+        [Parameter(Mandatory = $true)]
+        [string]$TaskName
+    )
+
+    Process {
+        foreach ($computer in $ComputerName) {
+            if ([string]::IsNullOrWhiteSpace($computer)) { continue }
+
+            Write-Output "=================== Remove Scheduled Task Target: $computer ==================="
+            
+            Invoke-Command -ComputerName $computer -Credential $Credential -ScriptBlock {
+                param($name)
+
+                $cleanName = $name.Trim()
+                try {
+                    if (Get-Command Unregister-ScheduledTask -ErrorAction SilentlyContinue) {
+                        Unregister-ScheduledTask -TaskName $cleanName -Confirm:$false -ErrorAction Stop
+                        [PSCustomObject]@{
+                            TaskName  = $cleanName
+                            Status    = "Deleted"
+                            Timestamp = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                        }
+                    } else {
+                        # Fallback: schtasks.exe
+                        $schRes = cmd.exe /c "schtasks.exe /delete /tn `"$cleanName`" /f" 2>&1
+                        [PSCustomObject]@{
+                            TaskName  = $cleanName
+                            Status    = "Deleted ($($schRes -join ' '))"
+                            Timestamp = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                        }
+                    }
+                } catch {
+                    # Fallback retry with schtasks
+                    try {
+                        $schRes = cmd.exe /c "schtasks.exe /delete /tn `"$cleanName`" /f" 2>&1
+                        [PSCustomObject]@{
+                            TaskName  = $cleanName
+                            Status    = "Deleted ($($schRes -join ' '))"
+                            Timestamp = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                        }
+                    } catch {
+                        [PSCustomObject]@{
+                            TaskName  = $cleanName
+                            Status    = "Failed: $($_.Exception.Message)"
+                            Timestamp = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                        }
+                    }
+                }
+            } -ArgumentList $TaskName
+        }
+    }
+}
+
+# Remove registry key or value from target computer
+function Remove-RemoteRegistryKey {
+    <#
+    .SYNOPSIS
+        Removes a registry key or value property from target computers.
+    .DESCRIPTION
+        Deletes registry persistence entries or keys remotely using Remove-Item / Remove-ItemProperty.
+    .PARAMETER ComputerName
+        An array of target computer names. Defaults to 'localhost'.
+    .PARAMETER Credential
+        Optional PSCredential object for authentication.
+    .PARAMETER Path
+        The registry path (e.g., 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' or 'HKCU:\Software\Malware').
+    .PARAMETER ValueName
+        Optional value/property name to delete (e.g., 'BackdoorRunKey'). If omitted, deletes the entire registry key path.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromPipeline = $true)]
+        [string[]]$ComputerName = @("localhost"),
+
+        [Parameter()]
+        [System.Management.Automation.PSCredential]$Credential,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter()]
+        [string]$ValueName
+    )
+
+    Process {
+        foreach ($computer in $ComputerName) {
+            if ([string]::IsNullOrWhiteSpace($computer)) { continue }
+
+            Write-Output "=================== Remove Registry Entry Target: $computer ==================="
+            
+            Invoke-Command -ComputerName $computer -Credential $Credential -ScriptBlock {
+                param($regPath, $regVal)
+
+                $cleanPath = $regPath.Trim()
+                try {
+                    if (-not [string]::IsNullOrWhiteSpace($regVal)) {
+                        # Delete specific registry value
+                        $cleanVal = $regVal.Trim()
+                        Remove-ItemProperty -Path $cleanPath -Name $cleanVal -Force -ErrorAction Stop
+                        [PSCustomObject]@{
+                            RegistryPath  = $cleanPath
+                            ValueName     = $cleanVal
+                            Status        = "Value Deleted"
+                            Timestamp     = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                        }
+                    } else {
+                        # Delete entire registry key
+                        Remove-Item -Path $cleanPath -Recurse -Force -ErrorAction Stop
+                        [PSCustomObject]@{
+                            RegistryPath  = $cleanPath
+                            ValueName     = "*"
+                            Status        = "Key Deleted"
+                            Timestamp     = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                        }
+                    }
+                } catch {
+                    [PSCustomObject]@{
+                        RegistryPath  = $cleanPath
+                        ValueName     = if ($regVal) { $regVal } else { "*" }
+                        Status        = "Failed: $($_.Exception.Message)"
+                        Timestamp     = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                    }
+                }
+            } -ArgumentList $Path, $ValueName
+        }
+    }
+}
+
+# Add host-based Windows Firewall rule on target computer
+function Add-RemoteFirewallRule {
+    <#
+    .SYNOPSIS
+        Adds a Windows Firewall rule on target computers to block/isolate malicious IP addresses or ports.
+    .DESCRIPTION
+        Creates a new firewall rule using New-NetFirewallRule with netsh.exe fallback for legacy Windows targets.
+    .PARAMETER ComputerName
+        An array of target computer names. Defaults to 'localhost'.
+    .PARAMETER Credential
+        Optional PSCredential object for authentication.
+    .PARAMETER Name
+        Unique rule identifier (e.g., 'IR_Block_C2_IP').
+    .PARAMETER DisplayName
+        Human-readable rule name. Defaults to Name.
+    .PARAMETER Direction
+        Inbound or Outbound. Default is 'Outbound'.
+    .PARAMETER Action
+        Block or Allow. Default is 'Block'.
+    .PARAMETER Protocol
+        TCP, UDP, or Any. Default is 'Any'.
+    .PARAMETER RemoteAddress
+        Remote IP address or CIDR subnet to block (e.g., '192.168.1.100' or '10.0.0.0/8').
+    .PARAMETER LocalPort
+        Local port number to block (e.g., '4444').
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromPipeline = $true)]
+        [string[]]$ComputerName = @("localhost"),
+
+        [Parameter()]
+        [System.Management.Automation.PSCredential]$Credential,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [Parameter()]
+        [string]$DisplayName,
+
+        [Parameter()]
+        [ValidateSet('Inbound', 'Outbound')]
+        [string]$Direction = 'Outbound',
+
+        [Parameter()]
+        [ValidateSet('Block', 'Allow')]
+        [string]$Action = 'Block',
+
+        [Parameter()]
+        [string]$Protocol = 'Any',
+
+        [Parameter()]
+        [string]$RemoteAddress,
+
+        [Parameter()]
+        [string]$LocalPort
+    )
+
+    Begin {
+        if ([string]::IsNullOrWhiteSpace($DisplayName)) { $DisplayName = $Name }
+    }
+
+    Process {
+        foreach ($computer in $ComputerName) {
+            if ([string]::IsNullOrWhiteSpace($computer)) { continue }
+
+            Write-Output "=================== Add Firewall Rule Target: $computer ==================="
+            
+            Invoke-Command -ComputerName $computer -Credential $Credential -ScriptBlock {
+                param($ruleName, $ruleDisp, $dir, $act, $proto, $remoteIP, $port)
+
+                try {
+                    if (Get-Command New-NetFirewallRule -ErrorAction SilentlyContinue) {
+                        $fwParams = @{
+                            Name        = $ruleName
+                            DisplayName = $ruleDisp
+                            Direction   = $dir
+                            Action      = $act
+                            Enabled     = 'True'
+                            ErrorAction = 'Stop'
+                        }
+                        if (-not [string]::IsNullOrWhiteSpace($remoteIP)) { $fwParams['RemoteAddress'] = $remoteIP.Trim() }
+                        if (-not [string]::IsNullOrWhiteSpace($port))     { $fwParams['LocalPort']     = $port.Trim() }
+                        if (-not [string]::IsNullOrWhiteSpace($proto) -and $proto -ne 'Any') { $fwParams['Protocol'] = $proto.Trim() }
+
+                        New-NetFirewallRule @fwParams | Out-Null
+                        [PSCustomObject]@{
+                            RuleName      = $ruleName
+                            Direction     = $dir
+                            Action        = $act
+                            RemoteAddress = if ($remoteIP) { $remoteIP } else { "Any" }
+                            LocalPort     = if ($port) { $port } else { "Any" }
+                            Status        = "Created (NetSecurity)"
+                            Timestamp     = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                        }
+                    } else {
+                        # Legacy fallback: netsh.exe advfirewall
+                        $netshCmd = "netsh advfirewall firewall add rule name=`"$ruleDisp`" dir=$($dir.ToLower()) action=$($act.ToLower()) enable=yes"
+                        if (-not [string]::IsNullOrWhiteSpace($remoteIP)) { $netshCmd += " remoteip=`"$($remoteIP.Trim())`"" }
+                        if (-not [string]::IsNullOrWhiteSpace($port))     { $netshCmd += " localport=`"$($port.Trim())`"" }
+                        if (-not [string]::IsNullOrWhiteSpace($proto) -and $proto -ne 'Any') { $netshCmd += " protocol=$($proto.ToLower())" }
+
+                        $netshRes = cmd.exe /c $netshCmd 2>&1
+                        [PSCustomObject]@{
+                            RuleName      = $ruleName
+                            Direction     = $dir
+                            Action        = $act
+                            RemoteAddress = if ($remoteIP) { $remoteIP } else { "Any" }
+                            LocalPort     = if ($port) { $port } else { "Any" }
+                            Status        = "Created (netsh: $($netshRes -join ' '))"
+                            Timestamp     = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                        }
+                    }
+                } catch {
+                    [PSCustomObject]@{
+                        RuleName  = $ruleName
+                        Direction = $dir
+                        Action    = $act
+                        Status    = "Failed: $($_.Exception.Message)"
+                        Timestamp = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')
+                    }
+                }
+            } -ArgumentList $Name, $DisplayName, $Direction, $Action, $Protocol, $RemoteAddress, $LocalPort
+        }
+    }
+}

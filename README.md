@@ -6,10 +6,12 @@ A self-contained, module-based PowerShell WPF application for remote system admi
 
 ## Key Features
 
-*   **Module-Based Architecture**: Automatically imports all custom administrative functions from a unified local module (`functions.psm1`). Functions are automatically populated in the UI dropdown.
+*   **Module-Based Architecture**: Automatically imports all custom administrative and containment functions from a unified local module (`functions.psm1`).
+*   **Dedicated "Contain / Clear" Tab**: Visually separates read-only investigative queries from destructive containment and remediation actions (`Reset-ADUserPassword`, `Stop-RemoteProcess`, `Stop-RemoteService`, `Remove-RemoteService`, `Remove-RemoteScheduledTask`, `Remove-RemoteItem`, `Remove-RemoteRegistryKey`, `Add-RemoteFirewallRule`, `Get-RemoteArtifact`).
+*   **Active Directory User Password Reset (`Reset-ADUserPassword`)**: Force-resets passwords for compromised AD accounts with ADSI LDAP fallback (runs without RSAT), includes a strong 20-character password generator button, unlocks locked accounts, and sets mandatory password change flags.
+*   **Incident Response Remediation Engine**: Full suite of remote clearing capabilities—killing malicious processes, stopping/deleting persistent services, removing scheduled tasks, deleting files/directories, purging registry run keys, and adding host-based firewall rules (`New-NetFirewallRule` / `netsh`).
 *   **Forensic EVTX Collection Engine**: Upgraded `Get-EVTX` with multi-protocol extraction (SMB -> WinRM -> WMI), log category presets (`DFIR`, `All`, `Custom`), and lock-free `wevtutil` remote exports.
-*   **Artifact Acquisition & Remediation**: Upgraded `Get-RemoteArtifact` with mode classification (`File`, `Executable` with password-protected ZIP to bypass AV/EDR network inspection, `Directory` ZIP), and post-acquisition remote target deletion (`-CleanRemote`) for incident response clearing actions.
-*   **Interactive Modal Popups**: Smart GUI popups for `Get-EVTX` (preset picker), `Get-RemoteArtifact` (type/password/remediation prompt), and `Get-CriticalEventXML` (date-range filter), keeping operator workflow intuitive.
+*   **High-Contrast Console Readability**: Uses high-contrast `DarkGoldenrod` foreground text for warnings to ensure crisp readability on the white console background.
 *   **Unified Relative Output Hierarchy**: All baselines, EVTX logs, and pulled artifacts are saved relative to the tool directory under `./Output/` (`./Output/EVTX_Logs/`, `./Output/Baselines/`, `./Output/Artifacts/`).
 *   **Asynchronous Background Execution**: Run administrative queries in parallel as background processes using `Start-Job`, keeping the user interface completely responsive and preventing freezes.
 *   **Real-Time Job Monitoring**: Active background jobs are monitored and collected via a dispatcher timer. Output (including remote computer names and any error records) is formatted and streamed directly to the Global Output Console upon completion.

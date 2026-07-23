@@ -42,10 +42,12 @@
    - Supports presets: `DFIR` (Security, System, Application, PowerShell, Sysmon), `All` (winevt log store), or `Custom`.
    - Uses remote `wevtutil epl` to export active logs cleanly without file lock failures.
 
-7. **Interactive GUI Modal Dialogs & Remote Artifact Collection**:
-   - `AdminTool.ps1` dynamically disables the generic `ArgumentsTextBox` for functions requiring specific input parameters (`Get-EVTX`, `Get-RemoteArtifact`, `Get-CriticalEventXML`).
-   - `Get-RemoteArtifact` supports artifact modes (`Auto`, `File`, `Executable`, `Directory`). Executables are zipped and password-protected (default `infected` or custom prompt) on the target before transfer to bypass AV/EDR inspection. Directories are compressed into `.zip` packages for single-pass transfer.
-   - `Get-RemoteArtifact` supports post-acquisition remediation cleanup (`-CleanRemote`). If checked in the GUI popup, a confirmation warning is displayed before removing the target artifact from the remote host.
+7. **Interactive GUI Modal Dialogs & Dedicated Containment Tab**:
+   - `AdminTool.ps1` features a dedicated, red-styled **"Contain / Clear"** tab for destructive incident response actions (`Get-RemoteArtifact`, `Reset-ADUserPassword`, `Stop-RemoteProcess`, `Stop-RemoteService`, `Remove-RemoteService`, `Remove-RemoteScheduledTask`, `Remove-RemoteItem`, `Remove-RemoteRegistryKey`, `Add-RemoteFirewallRule`), keeping investigative queries safely separated.
+   - All containment actions enforce interactive modal popup dialogs with operator confirmation warnings before execution.
+   - Console warning output uses high-contrast `DarkGoldenrod` foreground text for high readability against the white background.
+   - `Get-RemoteArtifact` supports artifact modes (`Auto`, `File`, `Executable`, `Directory`). Executables are zipped and password-protected (default `infected` or custom prompt) on target before transfer. Directories are compressed into `.zip` packages. Supports `-CleanRemote` post-acquisition target removal.
+   - `Reset-ADUserPassword` resets compromised AD account passwords with ADSI LDAP fallback, auto-generates 20-character complex passwords, unlocks locked accounts, and sets `pwdLastSet = 0`.
 
 8. **Timestamp Standard**:
    - All timestamp properties in output custom objects MUST use the standard ISO 8601 format:

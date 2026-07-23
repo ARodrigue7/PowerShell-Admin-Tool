@@ -78,6 +78,24 @@ $XAML_MainWindow = @"
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>
+
+                <TabItem Header="⚠ Contain / Clear">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="10">
+                            <Border Background="#FFF5F5" BorderBrush="#FFCCCC" BorderThickness="1" CornerRadius="4" Padding="8" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="⚠ INCIDENT RESPONSE ACTIONS" FontWeight="Bold" Foreground="DarkRed" FontSize="13" />
+                                    <TextBlock Text="Actions in this tab modify target hosts. Ensure proper authorization before execution." Foreground="#990000" FontSize="11" TextWrapping="Wrap" Margin="0,3,0,0" />
+                                </StackPanel>
+                            </Border>
+                            <Label Content="Select Containment Action" FontWeight="Bold" />
+                            <ComboBox Name="ContainActionComboBox" DisplayMemberPath="Name" Margin="0,5,0,0" />
+                            <Label Content="Containment Arguments / Path (Optional)" FontWeight="Bold" Margin="0,10,0,0" />
+                            <TextBox Name="ContainArgumentsTextBox" ToolTip="Parameters will be collected via popup for specialized containment functions." Height="25" />
+                            <Button Name="ExecuteContainButton" Content="⚠ Execute Containment Action" FontWeight="Bold" Margin="0,15,0,0" Height="35" Background="#FFE0E0" Foreground="DarkRed" BorderBrush="#CC0000" />
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
             </TabControl>
             <Border Grid.Column="1" Margin="10" BorderBrush="LightGray" BorderThickness="1">
                 <Grid>
@@ -449,6 +467,622 @@ function Show-CriticalEventXMLDialog {
     } catch {}
     return $null
 }
+
+function Show-ResetADUserPasswordDialog {
+    $xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Reset Compromised AD User Passwords" Height="380" Width="500" WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+    <Grid Margin="15">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Text="Reset AD User Password(s):" FontWeight="Bold" FontSize="14" Foreground="DarkRed" Margin="0,0,0,3"/>
+        <TextBlock Grid.Row="1" Text="Enter sAMAccountNames (comma-separated or one per line):" Foreground="Gray" Margin="0,0,0,5"/>
+        <TextBox Name="TxtUsers" Grid.Row="2" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Margin="0,0,0,10" MinHeight="60"/>
+        
+        <Grid Grid.Row="3" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="100"/><ColumnDefinition Width="*"/><ColumnDefinition Width="130"/></Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="New Password:" VerticalAlignment="Center"/>
+            <TextBox Name="TxtPassword" Grid.Column="1" Height="25" Margin="0,0,5,0"/>
+            <Button Name="BtnGenPwd" Grid.Column="2" Content="Generate Strong" Height="25"/>
+        </Grid>
+
+        <CheckBox Name="ChkMustChange" Grid.Row="4" Content="Require password change at next logon" IsChecked="True" Margin="0,0,0,5"/>
+        <CheckBox Name="ChkUnlock" Grid.Row="5" Content="Unlock account if locked" IsChecked="True" Margin="0,0,0,10"/>
+
+        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Name="BtnOK" Content="Reset Passwords" Width="120" Height="30" IsDefault="True" Background="#FFE0E0" Foreground="DarkRed" FontWeight="Bold" Margin="0,0,10,0"/>
+            <Button Name="BtnCancel" Content="Cancel" Width="80" Height="30" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>
+"@
+    try {
+        [xml]$xmlDoc = $xaml
+        $reader = [System.Xml.XmlNodeReader]::new($xmlDoc)
+        $dlg = [Windows.Markup.XamlReader]::Load($reader)
+        if ($ui.Window) { $dlg.Owner = $ui.Window }
+
+        $txtUsers    = $dlg.FindName("TxtUsers")
+        $txtPassword = $dlg.FindName("TxtPassword")
+        $btnGenPwd   = $dlg.FindName("BtnGenPwd")
+        $chkMust     = $dlg.FindName("ChkMustChange")
+        $chkUnlock   = $dlg.FindName("ChkUnlock")
+        $btnOK       = $dlg.FindName("BtnOK")
+
+        # Complex password generator function
+        function Get-RandomComplexPassword {
+            $u = "ABCDEFGHJKLMNPQRSTUVWXYZ"; $l = "abcdefghijkmnopqrstuvwxyz"; $n = "23456789"; $s = "!@#$%^&*()-_=+"
+            $all = $u + $l + $n + $s; $rnd = New-Object System.Random
+            $pwd = @($u[$rnd.Next($u.Length)], $l[$rnd.Next($l.Length)], $n[$rnd.Next($n.Length)], $s[$rnd.Next($s.Length)])
+            for ($i = 0; $i -lt 16; $i++) { $pwd += $all[$rnd.Next($all.Length)] }
+            return ($pwd | Sort-Object { $rnd.Next() }) -join ''
+        }
+
+        $txtPassword.Text = Get-RandomComplexPassword
+
+        $btnGenPwd.add_Click({
+            $txtPassword.Text = Get-RandomComplexPassword
+        })
+
+        $btnOK.add_Click({
+            if ([string]::IsNullOrWhiteSpace($txtUsers.Text)) {
+                [System.Windows.MessageBox]::Show("Please enter at least one compromised username.", "Validation Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+                return
+            }
+            $userList = @($txtUsers.Text -split "[\r\n,]+" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+            
+            $confirm = [System.Windows.MessageBox]::Show(
+                "WARNING: You are about to forcibly reset passwords for $($userList.Count) Active Directory account(s):`n$($userList -join ', ')`n`nAre you sure you want to proceed?",
+                "Confirm Password Reset",
+                [System.Windows.MessageBoxButton]::YesNo,
+                [System.Windows.MessageBoxImage]::Warning
+            )
+            if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+
+            $script:resetADResult = @{
+                Identity           = $userList
+                NewPassword        = $txtPassword.Text.Trim()
+                MustChangePassword = [bool]$chkMust.IsChecked
+                UnlockAccount      = [bool]$chkUnlock.IsChecked
+            }
+            $dlg.DialogResult = $true
+            $dlg.Close()
+        })
+
+        if ($dlg.ShowDialog() -eq $true) { return $script:resetADResult }
+    } catch {}
+    return $null
+}
+
+function Show-StopRemoteProcessDialog {
+    $xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Terminate Remote Process" Height="250" Width="480" WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+    <Grid Margin="15">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Text="Terminate Remote Process:" FontWeight="Bold" FontSize="14" Foreground="DarkRed" Margin="0,0,0,10"/>
+        
+        <Grid Grid.Row="1" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="110"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Process Name:" VerticalAlignment="Center"/>
+            <TextBox Name="TxtProcName" Grid.Column="1" Height="25" ToolTip="e.g. malware.exe or mimikatz"/>
+        </Grid>
+
+        <Grid Grid.Row="2" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="110"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="OR Process ID:" VerticalAlignment="Center"/>
+            <TextBox Name="TxtProcPID" Grid.Column="1" Height="25" ToolTip="Numeric PID e.g. 4820"/>
+        </Grid>
+
+        <CheckBox Name="ChkForce" Grid.Row="3" Content="Force termination (-Force)" IsChecked="True" Margin="0,0,0,10"/>
+
+        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Name="BtnOK" Content="Kill Process" Width="110" Height="30" IsDefault="True" Background="#FFE0E0" Foreground="DarkRed" FontWeight="Bold" Margin="0,0,10,0"/>
+            <Button Name="BtnCancel" Content="Cancel" Width="80" Height="30" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>
+"@
+    try {
+        [xml]$xmlDoc = $xaml
+        $reader = [System.Xml.XmlNodeReader]::new($xmlDoc)
+        $dlg = [Windows.Markup.XamlReader]::Load($reader)
+        if ($ui.Window) { $dlg.Owner = $ui.Window }
+
+        $txtProcName = $dlg.FindName("TxtProcName")
+        $txtProcPID  = $dlg.FindName("TxtProcPID")
+        $chkForce    = $dlg.FindName("ChkForce")
+        $btnOK       = $dlg.FindName("BtnOK")
+
+        $btnOK.add_Click({
+            if ([string]::IsNullOrWhiteSpace($txtProcName.Text) -and [string]::IsNullOrWhiteSpace($txtProcPID.Text)) {
+                [System.Windows.MessageBox]::Show("Please enter either a Process Name or Process ID.", "Validation Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+                return
+            }
+
+            $pidVal = 0
+            if (-not [string]::IsNullOrWhiteSpace($txtProcPID.Text)) {
+                if (-not [int]::TryParse($txtProcPID.Text.Trim(), [ref]$pidVal)) {
+                    [System.Windows.MessageBox]::Show("Process ID must be a valid integer number.", "Validation Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+                    return
+                }
+            }
+
+            $targetDesc = if ($pidVal -gt 0) { "PID $pidVal" } else { "'$($txtProcName.Text.Trim())'" }
+            $confirm = [System.Windows.MessageBox]::Show(
+                "WARNING: You are about to forcibly terminate process $targetDesc on target host(s).`n`nAre you sure you want to proceed?",
+                "Confirm Process Termination",
+                [System.Windows.MessageBoxButton]::YesNo,
+                [System.Windows.MessageBoxImage]::Warning
+            )
+            if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+
+            $script:stopProcResult = @{
+                ProcessName = $txtProcName.Text.Trim()
+                ProcessId   = $pidVal
+                Force       = [bool]$chkForce.IsChecked
+            }
+            $dlg.DialogResult = $true
+            $dlg.Close()
+        })
+
+        if ($dlg.ShowDialog() -eq $true) { return $script:stopProcResult }
+    } catch {}
+    return $null
+}
+
+function Show-RemoveRemoteItemDialog {
+    $xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Remove File / Directory" Height="220" Width="480" WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+    <Grid Margin="15">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Text="Remove File or Directory from Target:" FontWeight="Bold" FontSize="14" Foreground="DarkRed" Margin="0,0,0,10"/>
+        
+        <Grid Grid.Row="1" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Target Path:" VerticalAlignment="Center"/>
+            <TextBox Name="TxtPath" Grid.Column="1" Height="25" ToolTip="e.g. C:\Windows\Temp\malware.exe"/>
+        </Grid>
+
+        <CheckBox Name="ChkRecurse" Grid.Row="2" Content="Recursively delete subfolders/contents (-Recurse)" IsChecked="True" Margin="0,0,0,10"/>
+
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Name="BtnOK" Content="Delete Item" Width="100" Height="30" IsDefault="True" Background="#FFE0E0" Foreground="DarkRed" FontWeight="Bold" Margin="0,0,10,0"/>
+            <Button Name="BtnCancel" Content="Cancel" Width="80" Height="30" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>
+"@
+    try {
+        [xml]$xmlDoc = $xaml
+        $reader = [System.Xml.XmlNodeReader]::new($xmlDoc)
+        $dlg = [Windows.Markup.XamlReader]::Load($reader)
+        if ($ui.Window) { $dlg.Owner = $ui.Window }
+
+        $txtPath    = $dlg.FindName("TxtPath")
+        $chkRecurse = $dlg.FindName("ChkRecurse")
+        $btnOK      = $dlg.FindName("BtnOK")
+
+        $btnOK.add_Click({
+            if ([string]::IsNullOrWhiteSpace($txtPath.Text)) {
+                [System.Windows.MessageBox]::Show("Target path cannot be empty.", "Validation Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+                return
+            }
+
+            $confirm = [System.Windows.MessageBox]::Show(
+                "WARNING: You are about to permanently delete '$($txtPath.Text.Trim())' from the target host(s).`n`nAre you sure you want to proceed?",
+                "Confirm Item Deletion",
+                [System.Windows.MessageBoxButton]::YesNo,
+                [System.Windows.MessageBoxImage]::Warning
+            )
+            if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+
+            $script:removeItemResult = @{
+                Path    = $txtPath.Text.Trim()
+                Recurse = [bool]$chkRecurse.IsChecked
+            }
+            $dlg.DialogResult = $true
+            $dlg.Close()
+        })
+
+        if ($dlg.ShowDialog() -eq $true) { return $script:removeItemResult }
+    } catch {}
+    return $null
+}
+
+function Show-StopRemoteServiceDialog {
+    $xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Stop Remote Service" Height="200" Width="480" WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+    <Grid Margin="15">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Text="Stop Remote Windows Service:" FontWeight="Bold" FontSize="14" Foreground="DarkRed" Margin="0,0,0,10"/>
+        
+        <Grid Grid.Row="1" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="100"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Service Name:" VerticalAlignment="Center"/>
+            <TextBox Name="TxtSvcName" Grid.Column="1" Height="25" ToolTip="e.g. Spooler or wuauserv"/>
+        </Grid>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Name="BtnOK" Content="Stop Service" Width="100" Height="30" IsDefault="True" Background="#FFE0E0" Foreground="DarkRed" FontWeight="Bold" Margin="0,0,10,0"/>
+            <Button Name="BtnCancel" Content="Cancel" Width="80" Height="30" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>
+"@
+    try {
+        [xml]$xmlDoc = $xaml
+        $reader = [System.Xml.XmlNodeReader]::new($xmlDoc)
+        $dlg = [Windows.Markup.XamlReader]::Load($reader)
+        if ($ui.Window) { $dlg.Owner = $ui.Window }
+
+        $txtSvcName = $dlg.FindName("TxtSvcName")
+        $btnOK      = $dlg.FindName("BtnOK")
+
+        $btnOK.add_Click({
+            if ([string]::IsNullOrWhiteSpace($txtSvcName.Text)) {
+                [System.Windows.MessageBox]::Show("Service Name cannot be empty.", "Validation Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+                return
+            }
+
+            $confirm = [System.Windows.MessageBox]::Show(
+                "WARNING: You are about to stop service '$($txtSvcName.Text.Trim())' on target host(s).`n`nAre you sure you want to proceed?",
+                "Confirm Stop Service",
+                [System.Windows.MessageBoxButton]::YesNo,
+                [System.Windows.MessageBoxImage]::Warning
+            )
+            if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+
+            $script:stopSvcResult = @{ Name = $txtSvcName.Text.Trim() }
+            $dlg.DialogResult = $true
+            $dlg.Close()
+        })
+
+        if ($dlg.ShowDialog() -eq $true) { return $script:stopSvcResult }
+    } catch {}
+    return $null
+}
+
+function Show-RemoveRemoteServiceDialog {
+    $xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Delete Remote Service" Height="200" Width="480" WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+    <Grid Margin="15">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Text="Delete Remote Windows Service Entirely:" FontWeight="Bold" FontSize="14" Foreground="DarkRed" Margin="0,0,0,10"/>
+        
+        <Grid Grid.Row="1" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="100"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Service Name:" VerticalAlignment="Center"/>
+            <TextBox Name="TxtSvcName" Grid.Column="1" Height="25" ToolTip="e.g. MaliciousService"/>
+        </Grid>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Name="BtnOK" Content="Delete Service" Width="110" Height="30" IsDefault="True" Background="#FFE0E0" Foreground="DarkRed" FontWeight="Bold" Margin="0,0,10,0"/>
+            <Button Name="BtnCancel" Content="Cancel" Width="80" Height="30" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>
+"@
+    try {
+        [xml]$xmlDoc = $xaml
+        $reader = [System.Xml.XmlNodeReader]::new($xmlDoc)
+        $dlg = [Windows.Markup.XamlReader]::Load($reader)
+        if ($ui.Window) { $dlg.Owner = $ui.Window }
+
+        $txtSvcName = $dlg.FindName("TxtSvcName")
+        $btnOK      = $dlg.FindName("BtnOK")
+
+        $btnOK.add_Click({
+            if ([string]::IsNullOrWhiteSpace($txtSvcName.Text)) {
+                [System.Windows.MessageBox]::Show("Service Name cannot be empty.", "Validation Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+                return
+            }
+
+            $confirm = [System.Windows.MessageBox]::Show(
+                "WARNING: You are about to PERMANENTLY DELETE service '$($txtSvcName.Text.Trim())' from target host(s).`n`nAre you sure you want to proceed?",
+                "Confirm Service Deletion",
+                [System.Windows.MessageBoxButton]::YesNo,
+                [System.Windows.MessageBoxImage]::Warning
+            )
+            if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+
+            $script:removeSvcResult = @{ Name = $txtSvcName.Text.Trim() }
+            $dlg.DialogResult = $true
+            $dlg.Close()
+        })
+
+        if ($dlg.ShowDialog() -eq $true) { return $script:removeSvcResult }
+    } catch {}
+    return $null
+}
+
+function Show-RemoveRemoteScheduledTaskDialog {
+    $xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Delete Remote Scheduled Task" Height="200" Width="480" WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+    <Grid Margin="15">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Text="Delete Scheduled Task from Target:" FontWeight="Bold" FontSize="14" Foreground="DarkRed" Margin="0,0,0,10"/>
+        
+        <Grid Grid.Row="1" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="110"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Task Name/Path:" VerticalAlignment="Center"/>
+            <TextBox Name="TxtTaskName" Grid.Column="1" Height="25" ToolTip="e.g. PersistenceTask or \Microsoft\Windows\BadTask"/>
+        </Grid>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Name="BtnOK" Content="Delete Task" Width="100" Height="30" IsDefault="True" Background="#FFE0E0" Foreground="DarkRed" FontWeight="Bold" Margin="0,0,10,0"/>
+            <Button Name="BtnCancel" Content="Cancel" Width="80" Height="30" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>
+"@
+    try {
+        [xml]$xmlDoc = $xaml
+        $reader = [System.Xml.XmlNodeReader]::new($xmlDoc)
+        $dlg = [Windows.Markup.XamlReader]::Load($reader)
+        if ($ui.Window) { $dlg.Owner = $ui.Window }
+
+        $txtTaskName = $dlg.FindName("TxtTaskName")
+        $btnOK       = $dlg.FindName("BtnOK")
+
+        $btnOK.add_Click({
+            if ([string]::IsNullOrWhiteSpace($txtTaskName.Text)) {
+                [System.Windows.MessageBox]::Show("Task Name cannot be empty.", "Validation Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+                return
+            }
+
+            $confirm = [System.Windows.MessageBox]::Show(
+                "WARNING: You are about to PERMANENTLY DELETE scheduled task '$($txtTaskName.Text.Trim())' from target host(s).`n`nAre you sure you want to proceed?",
+                "Confirm Scheduled Task Deletion",
+                [System.Windows.MessageBoxButton]::YesNo,
+                [System.Windows.MessageBoxImage]::Warning
+            )
+            if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+
+            $script:removeTaskResult = @{ TaskName = $txtTaskName.Text.Trim() }
+            $dlg.DialogResult = $true
+            $dlg.Close()
+        })
+
+        if ($dlg.ShowDialog() -eq $true) { return $script:removeTaskResult }
+    } catch {}
+    return $null
+}
+
+function Show-RemoveRemoteRegistryKeyDialog {
+    $xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Delete Remote Registry Entry" Height="250" Width="500" WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+    <Grid Margin="15">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Text="Remove Registry Key or Property from Target:" FontWeight="Bold" FontSize="14" Foreground="DarkRed" Margin="0,0,0,10"/>
+        
+        <Grid Grid.Row="1" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="110"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Registry Path:" VerticalAlignment="Center"/>
+            <TextBox Name="TxtPath" Grid.Column="1" Height="25" ToolTip="e.g. HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"/>
+        </Grid>
+
+        <Grid Grid.Row="2" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="110"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Value Name:" VerticalAlignment="Center"/>
+            <TextBox Name="TxtValName" Grid.Column="1" Height="25" ToolTip="Leave empty to delete entire key path"/>
+        </Grid>
+
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Name="BtnOK" Content="Delete Entry" Width="110" Height="30" IsDefault="True" Background="#FFE0E0" Foreground="DarkRed" FontWeight="Bold" Margin="0,0,10,0"/>
+            <Button Name="BtnCancel" Content="Cancel" Width="80" Height="30" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>
+"@
+    try {
+        [xml]$xmlDoc = $xaml
+        $reader = [System.Xml.XmlNodeReader]::new($xmlDoc)
+        $dlg = [Windows.Markup.XamlReader]::Load($reader)
+        if ($ui.Window) { $dlg.Owner = $ui.Window }
+
+        $txtPath    = $dlg.FindName("TxtPath")
+        $txtValName = $dlg.FindName("TxtValName")
+        $btnOK      = $dlg.FindName("BtnOK")
+
+        $btnOK.add_Click({
+            if ([string]::IsNullOrWhiteSpace($txtPath.Text)) {
+                [System.Windows.MessageBox]::Show("Registry Path cannot be empty.", "Validation Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+                return
+            }
+
+            $targetDesc = if ($txtValName.Text) { "value '$($txtValName.Text.Trim())' in path '$($txtPath.Text.Trim())'" } else { "ENTIRE registry key '$($txtPath.Text.Trim())'" }
+            $confirm = [System.Windows.MessageBox]::Show(
+                "WARNING: You are about to PERMANENTLY DELETE $targetDesc on target host(s).`n`nAre you sure you want to proceed?",
+                "Confirm Registry Deletion",
+                [System.Windows.MessageBoxButton]::YesNo,
+                [System.Windows.MessageBoxImage]::Warning
+            )
+            if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+
+            $script:removeRegResult = @{
+                Path      = $txtPath.Text.Trim()
+                ValueName = $txtValName.Text.Trim()
+            }
+            $dlg.DialogResult = $true
+            $dlg.Close()
+        })
+
+        if ($dlg.ShowDialog() -eq $true) { return $script:removeRegResult }
+    } catch {}
+    return $null
+}
+
+function Show-AddRemoteFirewallRuleDialog {
+    $xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Add Remote Firewall Rule" Height="360" Width="500" WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+    <Grid Margin="15">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Text="Add Host-Based Windows Firewall Rule:" FontWeight="Bold" FontSize="14" Foreground="DarkRed" Margin="0,0,0,10"/>
+        
+        <Grid Grid.Row="1" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="120"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Rule Identifier:" VerticalAlignment="Center"/>
+            <TextBox Name="TxtRuleName" Grid.Column="1" Height="25" Text="IR_Block_C2_IP"/>
+        </Grid>
+
+        <Grid Grid.Row="2" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="120"/><ColumnDefinition Width="*"/><ColumnDefinition Width="80"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Direction:" VerticalAlignment="Center"/>
+            <ComboBox Name="CmbDir" Grid.Column="1" Height="25" SelectedIndex="1">
+                <ComboBoxItem Content="Inbound"/>
+                <ComboBoxItem Content="Outbound"/>
+            </ComboBox>
+            <TextBlock Grid.Column="2" Text="Action:" VerticalAlignment="Center" Margin="10,0,0,0"/>
+            <ComboBox Name="CmbAction" Grid.Column="3" Height="25" SelectedIndex="0">
+                <ComboBoxItem Content="Block"/>
+                <ComboBoxItem Content="Allow"/>
+            </ComboBox>
+        </Grid>
+
+        <Grid Grid.Row="3" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="120"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Protocol:" VerticalAlignment="Center"/>
+            <ComboBox Name="CmbProto" Grid.Column="1" Height="25" SelectedIndex="0">
+                <ComboBoxItem Content="Any"/>
+                <ComboBoxItem Content="TCP"/>
+                <ComboBoxItem Content="UDP"/>
+            </ComboBox>
+        </Grid>
+
+        <Grid Grid.Row="4" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="120"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Remote Address:" VerticalAlignment="Center"/>
+            <TextBox Name="TxtRemoteIP" Grid.Column="1" Height="25" ToolTip="e.g. 192.168.1.100 or 10.0.0.0/8"/>
+        </Grid>
+
+        <Grid Grid.Row="5" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="120"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Local Port:" VerticalAlignment="Center"/>
+            <TextBox Name="TxtLocalPort" Grid.Column="1" Height="25" ToolTip="e.g. 4444 or leave blank for all ports"/>
+        </Grid>
+
+        <StackPanel Grid.Row="8" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Name="BtnOK" Content="Add Rule" Width="100" Height="30" IsDefault="True" Background="#FFE0E0" Foreground="DarkRed" FontWeight="Bold" Margin="0,0,10,0"/>
+            <Button Name="BtnCancel" Content="Cancel" Width="80" Height="30" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>
+"@
+    try {
+        [xml]$xmlDoc = $xaml
+        $reader = [System.Xml.XmlNodeReader]::new($xmlDoc)
+        $dlg = [Windows.Markup.XamlReader]::Load($reader)
+        if ($ui.Window) { $dlg.Owner = $ui.Window }
+
+        $txtRuleName  = $dlg.FindName("TxtRuleName")
+        $cmbDir       = $dlg.FindName("CmbDir")
+        $cmbAction    = $dlg.FindName("CmbAction")
+        $cmbProto     = $dlg.FindName("CmbProto")
+        $txtRemoteIP  = $dlg.FindName("TxtRemoteIP")
+        $txtLocalPort = $dlg.FindName("TxtLocalPort")
+        $btnOK        = $dlg.FindName("BtnOK")
+
+        $btnOK.add_Click({
+            if ([string]::IsNullOrWhiteSpace($txtRuleName.Text)) {
+                [System.Windows.MessageBox]::Show("Rule Identifier cannot be empty.", "Validation Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+                return
+            }
+
+            $dirVal = if ($cmbDir.SelectedItem -is [System.Windows.Controls.ComboBoxItem]) { $cmbDir.SelectedItem.Content } else { $cmbDir.Text }
+            $actVal = if ($cmbAction.SelectedItem -is [System.Windows.Controls.ComboBoxItem]) { $cmbAction.SelectedItem.Content } else { $cmbAction.Text }
+            $protoVal = if ($cmbProto.SelectedItem -is [System.Windows.Controls.ComboBoxItem]) { $cmbProto.SelectedItem.Content } else { $cmbProto.Text }
+
+            $confirm = [System.Windows.MessageBox]::Show(
+                "WARNING: You are about to add firewall rule '$($txtRuleName.Text.Trim())' ($actVal $dirVal) to target host(s).`n`nAre you sure you want to proceed?",
+                "Confirm Firewall Rule Addition",
+                [System.Windows.MessageBoxButton]::YesNo,
+                [System.Windows.MessageBoxImage]::Warning
+            )
+            if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+
+            $script:addFwResult = @{
+                Name          = $txtRuleName.Text.Trim()
+                DisplayName   = $txtRuleName.Text.Trim()
+                Direction     = $dirVal
+                Action        = $actVal
+                Protocol      = $protoVal
+                RemoteAddress = $txtRemoteIP.Text.Trim()
+                LocalPort     = $txtLocalPort.Text.Trim()
+            }
+            $dlg.DialogResult = $true
+            $dlg.Close()
+        })
+
+        if ($dlg.ShowDialog() -eq $true) { return $script:addFwResult }
+    } catch {}
+    return $null
+}
 #endregion
 
 $ui.ComputerInputTextBox.add_TextChanged({ Update-ComputerListView })
@@ -554,7 +1188,7 @@ $ui.RunScriptButton.add_Click({
     if ($funcName -eq 'Get-EVTX') {
         $evtxRes = Show-EVTXDialog
         if ($null -eq $evtxRes) {
-            Add-OutputLine -Text "Get-EVTX execution cancelled by operator." -Color "Yellow"
+            Add-OutputLine -Text "Get-EVTX execution cancelled by operator." -Color "DarkGoldenrod"
             return
         }
         $extraParams['LogCategory'] = $evtxRes.LogCategory
@@ -563,7 +1197,7 @@ $ui.RunScriptButton.add_Click({
     elseif ($funcName -eq 'Get-RemoteArtifact') {
         $artRes = Show-RemoteArtifactDialog
         if ($null -eq $artRes) {
-            Add-OutputLine -Text "Get-RemoteArtifact execution cancelled by operator." -Color "Yellow"
+            Add-OutputLine -Text "Get-RemoteArtifact execution cancelled by operator." -Color "DarkGoldenrod"
             return
         }
         $extraParams['Path']        = $artRes.Path
@@ -576,7 +1210,7 @@ $ui.RunScriptButton.add_Click({
     elseif ($funcName -eq 'Get-CriticalEventXML') {
         $dateRes = Show-CriticalEventXMLDialog
         if ($null -eq $dateRes) {
-            Add-OutputLine -Text "Get-CriticalEventXML execution cancelled by operator." -Color "Yellow"
+            Add-OutputLine -Text "Get-CriticalEventXML execution cancelled by operator." -Color "DarkGoldenrod"
             return
         }
         $extraParams['BeginTime'] = $dateRes.BeginTime
@@ -680,6 +1314,182 @@ $ui.RunScriptButton.add_Click({
         }
     } catch {
         Add-OutputLine -Text "Error starting job: $($_.Exception.Message)" -Color "Red"
+    }
+})
+
+$ui.ContainActionComboBox.add_SelectionChanged({
+    $selectedScript = $ui.ContainActionComboBox.SelectedItem
+    if ($selectedScript) {
+        try {
+            $cmd = Get-Command -Name $selectedScript.Name -ErrorAction SilentlyContinue
+            if ($cmd) { $definitionText = "function $($cmd.Name) {`r`n$($cmd.Definition)`r`n}" }
+            else { $definitionText = "Function source not available." }
+            $doc = [System.Windows.Documents.FlowDocument]::new()
+            $cp = [System.Windows.Documents.Paragraph]::new()
+            $cp.FontFamily = "Consolas"; $cp.FontSize = 12
+            $cp.Inlines.Add([System.Windows.Documents.Run]::new($definitionText))
+            $doc.Blocks.Add($cp)
+            $ui.ScriptDescriptionViewer.Document = $doc
+        } catch {}
+    }
+    if ($selectedScript -and ($selectedScript.Name -in @('Get-RemoteArtifact', 'Reset-ADUserPassword', 'Stop-RemoteProcess', 'Remove-RemoteItem', 'Stop-RemoteService', 'Remove-RemoteService', 'Remove-RemoteScheduledTask', 'Remove-RemoteRegistryKey', 'Add-RemoteFirewallRule'))) {
+        $ui.ContainArgumentsTextBox.IsEnabled = $false
+        $ui.ContainArgumentsTextBox.ToolTip = "Parameters for '$($selectedScript.Name)' will be collected via a dedicated popup dialog."
+    } else {
+        $ui.ContainArgumentsTextBox.IsEnabled = $true
+        $ui.ContainArgumentsTextBox.ToolTip = "Enter arguments or target paths for the containment action."
+    }
+})
+
+$ui.ExecuteContainButton.add_Click({
+    $Global:LastJobResults = $null
+    $computers = $ui.ComputerListView.ItemsSource
+    $selectedScript = $ui.ContainActionComboBox.SelectedItem
+    if (-not $computers) { Add-OutputLine -Text "No target computers specified." -Color "Red"; return }
+    if (-not $selectedScript) { Add-OutputLine -Text "No containment action selected." -Color "Red"; return }
+
+    $funcName = $selectedScript.Name
+    $extraParams = @{}
+
+    if ($funcName -eq 'Get-RemoteArtifact') {
+        $artRes = Show-RemoteArtifactDialog
+        if ($null -eq $artRes) { Add-OutputLine -Text "Get-RemoteArtifact execution cancelled by operator." -Color "DarkGoldenrod"; return }
+        $extraParams['Path']        = $artRes.Path
+        $extraParams['Type']        = $artRes.Type
+        $extraParams['ZipPassword'] = $artRes.ZipPassword
+        if ($artRes.CleanRemote) { $extraParams['CleanRemote'] = $true }
+    }
+    elseif ($funcName -eq 'Reset-ADUserPassword') {
+        $adRes = Show-ResetADUserPasswordDialog
+        if ($null -eq $adRes) { Add-OutputLine -Text "Reset-ADUserPassword execution cancelled by operator." -Color "DarkGoldenrod"; return }
+        $extraParams['Identity']           = $adRes.Identity
+        $extraParams['NewPassword']        = $adRes.NewPassword
+        $extraParams['MustChangePassword'] = $adRes.MustChangePassword
+        $extraParams['UnlockAccount']      = $adRes.UnlockAccount
+    }
+    elseif ($funcName -eq 'Stop-RemoteProcess') {
+        $procRes = Show-StopRemoteProcessDialog
+        if ($null -eq $procRes) { Add-OutputLine -Text "Stop-RemoteProcess execution cancelled by operator." -Color "DarkGoldenrod"; return }
+        if ($procRes.ProcessName) { $extraParams['ProcessName'] = $procRes.ProcessName }
+        if ($procRes.ProcessId -gt 0) { $extraParams['ProcessId'] = $procRes.ProcessId }
+        $extraParams['Force'] = $procRes.Force
+    }
+    elseif ($funcName -eq 'Remove-RemoteItem') {
+        $itemRes = Show-RemoveRemoteItemDialog
+        if ($null -eq $itemRes) { Add-OutputLine -Text "Remove-RemoteItem execution cancelled by operator." -Color "DarkGoldenrod"; return }
+        $extraParams['Path']    = $itemRes.Path
+        $extraParams['Recurse'] = $itemRes.Recurse
+    }
+    elseif ($funcName -eq 'Stop-RemoteService') {
+        $svcRes = Show-StopRemoteServiceDialog
+        if ($null -eq $svcRes) { Add-OutputLine -Text "Stop-RemoteService execution cancelled by operator." -Color "DarkGoldenrod"; return }
+        $extraParams['Name'] = $svcRes.Name
+    }
+    elseif ($funcName -eq 'Remove-RemoteService') {
+        $svcRemRes = Show-RemoveRemoteServiceDialog
+        if ($null -eq $svcRemRes) { Add-OutputLine -Text "Remove-RemoteService execution cancelled by operator." -Color "DarkGoldenrod"; return }
+        $extraParams['Name'] = $svcRemRes.Name
+    }
+    elseif ($funcName -eq 'Remove-RemoteScheduledTask') {
+        $taskRes = Show-RemoveRemoteScheduledTaskDialog
+        if ($null -eq $taskRes) { Add-OutputLine -Text "Remove-RemoteScheduledTask execution cancelled by operator." -Color "DarkGoldenrod"; return }
+        $extraParams['TaskName'] = $taskRes.TaskName
+    }
+    elseif ($funcName -eq 'Remove-RemoteRegistryKey') {
+        $regRes = Show-RemoveRemoteRegistryKeyDialog
+        if ($null -eq $regRes) { Add-OutputLine -Text "Remove-RemoteRegistryKey execution cancelled by operator." -Color "DarkGoldenrod"; return }
+        $extraParams['Path'] = $regRes.Path
+        if ($regRes.ValueName) { $extraParams['ValueName'] = $regRes.ValueName }
+    }
+    elseif ($funcName -eq 'Add-RemoteFirewallRule') {
+        $fwRes = Show-AddRemoteFirewallRuleDialog
+        if ($null -eq $fwRes) { Add-OutputLine -Text "Add-RemoteFirewallRule execution cancelled by operator." -Color "DarkGoldenrod"; return }
+        $extraParams['Name']          = $fwRes.Name
+        $extraParams['DisplayName']   = $fwRes.DisplayName
+        $extraParams['Direction']     = $fwRes.Direction
+        $extraParams['Action']        = $fwRes.Action
+        $extraParams['Protocol']      = $fwRes.Protocol
+        if ($fwRes.RemoteAddress) { $extraParams['RemoteAddress'] = $fwRes.RemoteAddress }
+        if ($fwRes.LocalPort)     { $extraParams['LocalPort']     = $fwRes.LocalPort }
+    }
+    else {
+        if (-not [string]::IsNullOrWhiteSpace($ui.ContainArgumentsTextBox.Text)) {
+            $extraParams['Path'] = $ui.ContainArgumentsTextBox.Text
+        }
+    }
+
+    Add-OutputLine -Text "⚠ Executing CONTAINMENT ACTION '$funcName' (Asynchronous)..." -Color "DarkRed"
+    $cred = New-PSCredentialFromUI
+    $modPath = $Global:ModulePath
+
+    $jobName = "Contain_$($funcName)_$(Get-Date -Format 'HHmmss')"
+    try {
+        $job = Start-Job -Name $jobName -ScriptBlock {
+            param($modulePath, $functionName, $computers, $credential, $extraParams)
+
+            function global:Get-Credential { return $null }
+
+            function global:Invoke-Command {
+                [CmdletBinding(DefaultParameterSetName='Session')]
+                param(
+                    [Parameter(Mandatory=$true, ParameterSetName='ComputerName')]
+                    [string[]]$ComputerName,
+                    [Parameter(Mandatory=$true)]
+                    [scriptblock]$ScriptBlock,
+                    [Parameter(ParameterSetName='ComputerName')]
+                    $Credential
+                )
+                $localNames = @("localhost", "127.0.0.1", "::1", $env:COMPUTERNAME.ToLower())
+                $results = @()
+                foreach ($comp in $ComputerName) {
+                    if ($localNames -contains $comp.Trim().ToLower()) {
+                        try {
+                            $res = & $ScriptBlock
+                            if ($res) {
+                                foreach ($r in $res) {
+                                    if ($r -and $r -is [System.Management.Automation.PSCustomObject]) {
+                                        if (-not $r.PSObject.Properties['PSComputerName']) {
+                                            $r | Add-Member -MemberType NoteProperty -Name "PSComputerName" -Value $env:COMPUTERNAME -Force
+                                        }
+                                    }
+                                    $results += $r
+                                }
+                            }
+                        } catch { Write-Error "Local execution bypass failed: $($_.Exception.Message)" }
+                    } else {
+                        $params = @{ ScriptBlock = $ScriptBlock; ComputerName = $comp }
+                        if ($Credential -ne $null) { $params['Credential'] = $Credential }
+                        $res = Microsoft.PowerShell.Core\Invoke-Command @params
+                        if ($res) { $results += $res }
+                    }
+                }
+                return $results
+            }
+
+            Import-Module $modulePath -Force
+            $command = Get-Command -Name $functionName -ErrorAction SilentlyContinue
+            if (-not $command) { throw "Function '$functionName' not found." }
+
+            $params = @{}
+            if ($computers -and $command.Parameters.ContainsKey('ComputerName')) { $params['ComputerName'] = $computers }
+            if ($credential -and $command.Parameters.ContainsKey('Credential')) { $params['Credential'] = $credential }
+            if ($extraParams -and $extraParams -is [hashtable]) {
+                foreach ($k in $extraParams.Keys) {
+                    if ($command.Parameters.ContainsKey($k)) { $params[$k] = $extraParams[$k] }
+                }
+            }
+
+            & $functionName @params
+        } -ArgumentList $modPath, $funcName, $computers, $cred, $extraParams
+
+        if ($job) {
+            $Global:ActiveJobs[$job.Id] = $job
+            Add-OutputLine -Text "Containment Job '$($job.Name)' (ID: $($job.Id)) queued." -Color "DarkOrange"
+        } else {
+            Add-OutputLine -Text "Failed to start containment job." -Color "Red"
+        }
+    } catch {
+        Add-OutputLine -Text "Error starting containment job: $($_.Exception.Message)" -Color "Red"
     }
 })
 
@@ -811,13 +1621,32 @@ try {
         Add-OutputLine -Text "Loading functions from module '$Global:ModulePath'..." -Color "Blue"
         Import-Module $Global:ModulePath -Force
         
-        $funcs = Get-Command -Module functions -CommandType Function | Sort-Object Name
-        if ($funcs) {
-            $ui.ScriptSelectionComboBox.ItemsSource = $funcs
-            $ui.ScriptSelectionComboBox.SelectedIndex = 0
-            Add-OutputLine -Text "Loaded $($funcs.Count) functions from module." -Color "Green"
+        $containmentNames = @(
+            'Get-RemoteArtifact',
+            'Reset-ADUserPassword',
+            'Stop-RemoteProcess',
+            'Stop-RemoteService',
+            'Remove-RemoteService',
+            'Remove-RemoteScheduledTask',
+            'Remove-RemoteItem',
+            'Remove-RemoteRegistryKey',
+            'Add-RemoteFirewallRule'
+        )
+
+        $allFuncs = Get-Command -Module functions -CommandType Function | Sort-Object Name
+        if ($allFuncs) {
+            $investigativeFuncs = @($allFuncs | Where-Object { $_.Name -notin $containmentNames })
+            $containmentFuncs   = @($allFuncs | Where-Object { $_.Name -in $containmentNames })
+
+            $ui.ScriptSelectionComboBox.ItemsSource = $investigativeFuncs
+            if ($investigativeFuncs.Count -gt 0) { $ui.ScriptSelectionComboBox.SelectedIndex = 0 }
+
+            $ui.ContainActionComboBox.ItemsSource = $containmentFuncs
+            if ($containmentFuncs.Count -gt 0) { $ui.ContainActionComboBox.SelectedIndex = 0 }
+
+            Add-OutputLine -Text "Loaded $($investigativeFuncs.Count) investigative function(s) and $($containmentFuncs.Count) containment action(s) from module." -Color "Green"
         } else {
-            Add-OutputLine -Text "No functions found in module functions." -Color "Orange"
+            Add-OutputLine -Text "No functions found in module functions." -Color "DarkOrange"
         }
     }
 
