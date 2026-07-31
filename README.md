@@ -1,103 +1,75 @@
-# PowerShell Remote Admin Tool
+# PowerShell Remote Admin Tool — User Guide
 
-![PowerShell Version](https://img.shields.io/badge/PowerShell-5.1%2B-blue)
-
-A self-contained, module-based PowerShell WPF application for remote system administration. This tool dynamically loads administrative functions from a local PowerShell module (`functions.psm1`) and executes them asynchronously as background jobs against one or multiple target computers.
-
-## Key Features
-
-*   **Module-Based Architecture**: Automatically imports all custom administrative and containment functions from a unified local module (`functions.psm1`).
-*   **Dedicated "Contain / Clear" Tab**: Visually separates read-only investigative queries from destructive containment and remediation actions (`Reset-ADUserPassword`, `Stop-RemoteProcess`, `Stop-RemoteService`, `Remove-RemoteService`, `Remove-RemoteScheduledTask`, `Remove-RemoteItem`, `Remove-RemoteRegistryKey`, `Add-RemoteFirewallRule`, `Get-RemoteArtifact`).
-*   **Active Directory User Password Reset (`Reset-ADUserPassword`)**: Force-resets passwords for compromised AD accounts with ADSI LDAP fallback (runs without RSAT), includes a strong 20-character password generator button, unlocks locked accounts, and sets mandatory password change flags.
-*   **Incident Response Remediation Engine**: Full suite of remote clearing capabilities—killing malicious processes, stopping/deleting persistent services, removing scheduled tasks, deleting files/directories, purging registry run keys, and adding host-based firewall rules (`New-NetFirewallRule` / `netsh`).
-*   **Forensic EVTX Collection Engine**: Upgraded `Get-EVTX` with multi-protocol extraction (SMB -> WinRM -> WMI), log category presets (`DFIR`, `All`, `Custom`), and lock-free `wevtutil` remote exports.
-*   **High-Contrast Console Readability**: Uses high-contrast `DarkGoldenrod` foreground text for warnings to ensure crisp readability on the white console background.
-*   **Unified Relative Output Hierarchy**: All baselines, EVTX logs, and pulled artifacts are saved relative to the tool directory under `./Output/` (`./Output/EVTX_Logs/`, `./Output/Baselines/`, `./Output/Artifacts/`).
-*   **Asynchronous Background Execution**: Run administrative queries in parallel as background processes using `Start-Job`, keeping the user interface completely responsive and preventing freezes.
-*   **Real-Time Job Monitoring**: Active background jobs are monitored and collected via a dispatcher timer. Output (including remote computer names and any error records) is formatted and streamed directly to the Global Output Console upon completion.
-*   **Quick OS Info**: Dedicated action to immediately query basic Operating System details, computer model, and calculating system uptime for target computers.
-*   **Alternate Credentials Support**: Run functions as another user by providing credentials (username and password) via the GUI.
-*   **Multi-Computer Targeting**:
-    *   Enter comma-separated computer names or IP addresses.
-    *   Import a list of computer targets directly from a `.txt` or `.csv` file.
-*   **Control Panel Console**: All execution output, status messages, and errors are color-coded in a consolidated console. Includes quick buttons to cancel all running background jobs or clear console logs.
+A graphical Windows PowerShell WPF application designed for system administrators, forensic analysts, and incident responders to perform remote investigation, baselining, and threat containment across Windows hosts.
 
 ---
 
-## File Structure
+## 🚀 Quick Start
 
-*   `AdminTool.ps1`: The main graphical user interface (WPF application). Handles UI layout, event loop, target resolution, background job starting, interactive popups, and result aggregation.
-*   `functions.psm1`: The PowerShell script module containing all custom administrative, forensic log collection, and baselining functions.
-*   `Output/`: Standardized output directory for all generated CSV baselines, exported `.evtx` log packages, and collected artifacts.
-*   `.gitignore`: Prevents VS/IDE metadata from being tracked.
-
----
-
-## Getting Started
-
-### Prerequisites
-
-*   Windows PowerShell 5.1 or later.
-*   .NET Framework 4.5 or later (typically installed by default on Windows).
-
-### Installation & Run
-
-1.  Download `AdminTool.ps1` and `functions.psm1` and place them in the same directory.
-2.  Open a PowerShell terminal and navigate to the directory.
-3.  Ensure your execution policy allows running local scripts:
-    ```powershell
-    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-    ```
-4.  Launch the tool:
-    ```powershell
-    .\AdminTool.ps1
-    ```
+1. Open PowerShell on your managing machine.
+2. Allow local script execution if needed:
+   ```powershell
+   Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+   ```
+3. Launch the application:
+   ```powershell
+   .\AdminTool.ps1
+   ```
 
 ---
 
-## Writing Functions for the Module (`functions.psm1`)
+## 📖 Operator How-To Guide
 
-All functions exported by `functions.psm1` are automatically loaded into the select dropdown in the tool. To integrate seamlessly with the remote targeting and credential system, functions should follow this pattern:
+### 1. Adding & Managing Target Hosts
+* **Manual Input**: Type comma-separated IP addresses or hostnames into the **Target Computers** box (e.g., `192.168.1.50, DC01, Server02`).
+* **Import from File**: Click **Import from File...** to load targets from a `.txt` or `.csv` file.
+* **Quick Host Controls**: Use **Remove Selected** or **Clear All** under the target chip list to modify your target list on the fly.
+* **Target Indicator Banners**: The blue and red banners on the action tabs display the currently active host count and target names so you always know which computers are targeted before running any command.
 
-```powershell
-function Get-MyCustomStatus {
-    [CmdletBinding()]
-    Param (
-        [Parameter(ValueFromPipeline = $true)]
-        [string[]]$ComputerName,
+### 2. Setting Credentials
+* **Default Session Context**: Leave **Username** and **Password** blank to execute commands using your current Windows session credentials.
+* **Alternate Domain Credentials**: Enter administrative credentials into **Username** and **Password**, then click **Apply Credentials**.
 
-        [PSCredential]$Credential
-    )
+### 3. Running Investigative Queries (`Run Functions` tab)
+1. Switch to the **Run Functions** tab.
+2. Use the **Search / Filter Functions** box to quickly find a function by name.
+3. Select the function from the dropdown list (e.g., `Get-HostBaseline`, `Get-ProcessInfo`, `Get-EVTX`).
+4. If a function requires options (such as `Get-EVTX` log categories or `Get-CriticalEventXML` date ranges), complete the interactive popup dialog.
+5. Click **Execute Function** to start the job asynchronously.
+6. Click **Get Quick OS Info** at any time for instant OS details, model, and system uptime.
 
-    Begin {
-        if (!$Credential) {
-            $Credential = Get-Credential
-        }
-    }
+### 4. Executing Threat Containment Actions (`⚠ Contain / Clear` tab)
+> ⚠️ **Caution**: Actions in this tab modify remote target hosts. Always verify active targets before executing.
 
-    Process {
-        # Execute commands against target computer(s)
-        Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {
-            # Target logic here
-        }
-    }
-}
-```
+1. Switch to the red-styled **⚠ Contain / Clear** tab.
+2. Check the **Active Targets** banner to confirm the intended hosts.
+3. Use the **Search / Filter Actions** box to find a containment action:
+   * **`Get-RemoteArtifact`**: Pull remote files, directories, or executables (auto-zipped with password protection). Supports post-transfer remote deletion (`-CleanRemote`).
+   * **`Reset-ADUserPassword`**: Force-reset compromised Active Directory user passwords with ADSI LDAP fallback, auto-generate strong passwords, unlock accounts, and set mandatory password change flags.
+   * **`Stop-RemoteProcess`**: Kill malicious processes by Name or PID.
+   * **`Stop-RemoteService` / `Remove-RemoteService`**: Stop or permanently delete service registrations.
+   * **`Remove-RemoteScheduledTask`**: Delete persistent scheduled tasks.
+   * **`Remove-RemoteItem`**: Delete files or folders recursively.
+   * **`Remove-RemoteRegistryKey`**: Purge registry run keys or specific value properties.
+   * **`Add-RemoteFirewallRule`**: Add host-based firewall rules to block malicious IPs or ports.
+4. Click **⚠ Execute Containment Action** and confirm the red safety confirmation dialog.
+
+### 5. Monitoring & Exporting Results
+* **Console Streaming**: Job results stream live into the console window upon completion.
+* **Filter Console by Host**: Select a specific host from the **Filter Console Host** dropdown to view output for that single machine, or select **All Hosts**.
+* **Exporting Results**: Click **Export Results...** to save complete output as CSV, JSON, or plain text logs.
+* **Canceling Jobs**: Click **Cancel Jobs** to immediately terminate running background tasks.
 
 ---
 
-## Remote WinRM Configuration
+## ⚙️ Endpoint WinRM Setup
 
-When querying remote computers, you may need to enable and configure Windows Remote Management (WinRM). 
-
-Run the following command on your local machine in an **Administrator PowerShell** window to add remote hosts to your `TrustedHosts` list:
-
-```powershell
-# Replace "IP_OR_HOSTNAME" with the actual IP address or name of your target machine, or use "*" for all
-Set-Item WSMan:\localhost\Client\TrustedHosts -Value "IP_OR_HOSTNAME" -Force
-```
-
-On target machines, ensure WinRM is enabled:
+Ensure target Windows hosts have WinRM enabled for remote management:
 ```powershell
 Enable-PSRemoting -Force
+```
+
+If managing non-domain endpoints from your workstation, add targets to TrustedHosts:
+```powershell
+Set-Item WSMan:\localhost\Client\TrustedHosts -Value "*" -Force
 ```

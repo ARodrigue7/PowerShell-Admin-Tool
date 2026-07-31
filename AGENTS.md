@@ -8,7 +8,8 @@
 
 2. **Graphical Interface (`AdminTool.ps1`)**:
    - Built with WPF (PresentationFramework) via XAML.
-   - Dynamically loads `functions.psm1` on startup.
+   - Dynamically loads `functions.psm1` on startup into dual ComboBoxes (`ScriptSelectionComboBox` and `ContainActionComboBox`).
+   - Features active target host indicator banners on action tabs, real-time function search/filter textboxes (`FunctionFilterTextBox`, `ContainFilterTextBox`), quick target host management buttons (`Remove Selected`, `Clear All`), and host-filtered console output (`ConsoleHostFilterComboBox`).
    - Executes administrative queries asynchronously in background jobs (`Start-Job`) monitored by a `DispatcherTimer`.
 
 3. **Legacy Host Compatibility & WMI/CIM Fallback Pattern**:
@@ -57,4 +58,9 @@
 9. **Credential Handling**:
    - Functions accept `[PSCredential]$Credential` parameter.
    - When running via `AdminTool.ps1` or background jobs, explicit UI credentials or `$null` (for default WSMan session context) are passed down. Avoid interactive prompts inside remote scriptblocks.
+
+10. **Documentation Separation Standard**:
+    - **`AGENTS.md`**: Dedicated to developer guidelines, AI agent instructions, system architecture, fallback patterns, and technical rules.
+    - **`README.md`**: Dedicated strictly to human operators as a clean User Guide & Operator How-To Manual.
+
 

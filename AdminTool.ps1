@@ -37,12 +37,20 @@ $XAML_MainWindow = @"
                             <Label Content="Target Computers" FontWeight="Bold" />
                             <TextBox Name="ComputerInputTextBox" ToolTip="Enter computer names, comma-separated." />
                             <Button Name="ImportFromFileButton" Content="Import from File..." Margin="0,5,0,0" />
-                            <ListView Name="ComputerListView" Height="150" SelectionMode="Multiple" ScrollViewer.HorizontalScrollBarVisibility="Disabled" Margin="0,5,0,0">
+                            <ListView Name="ComputerListView" Height="130" SelectionMode="Multiple" ScrollViewer.HorizontalScrollBarVisibility="Disabled" Margin="0,5,0,0">
                                 <ListView.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ListView.ItemsPanel>
                                 <ListView.ItemTemplate><DataTemplate>
                                     <Border BorderBrush="CornflowerBlue" Background="AliceBlue" BorderThickness="1" CornerRadius="3" Margin="3" Padding="6,3"><TextBlock Text="{Binding}" /></Border>
                                 </DataTemplate></ListView.ItemTemplate>
                             </ListView>
+                            <Grid Margin="0,5,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Button Name="RemoveSelectedTargetButton" Content="Remove Selected" Margin="0,0,2,0" Height="24" />
+                                <Button Name="ClearAllTargetsButton" Content="Clear All" Margin="2,0,0,0" Height="24" />
+                            </Grid>
                             
                             <Separator Margin="0,15,0,10" />
                             
@@ -69,10 +77,13 @@ $XAML_MainWindow = @"
                 <TabItem Header="Run Functions">
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <StackPanel Margin="10">
+                            <Border Background="#F0F7FF" BorderBrush="#BEE0FF" BorderThickness="1" CornerRadius="4" Padding="6" Margin="0,0,0,10">
+                                <TextBlock Name="RunTargetBannerTextBlock" Text="🎯 Active Target(s) (0): None" Foreground="#005A9C" FontSize="11" FontWeight="SemiBold" TextWrapping="Wrap" />
+                            </Border>
+                            <Label Content="Search / Filter Functions" FontWeight="Bold" />
+                            <TextBox Name="FunctionFilterTextBox" ToolTip="Type to filter functions in real time..." Margin="0,2,0,8" Height="24" />
                             <Label Content="Select &amp; Run Function" FontWeight="Bold" />
                             <ComboBox Name="ScriptSelectionComboBox" DisplayMemberPath="Name" Margin="0,5,0,0" />
-                            <Label Content="Function Arguments / Path (Optional)" FontWeight="Bold" Margin="0,10,0,0" />
-                            <TextBox Name="ArgumentsTextBox" ToolTip="Enter arguments or paths for the function (e.g. C:\Windows\System32\drivers\etc\hosts)" Height="25" />
                             <Button Name="GetInfoButton" Content="Get Quick OS Info" FontWeight="Bold" Margin="0,15,0,0" Height="30" />
                             <Button Name="RunScriptButton" Content="Execute Function" FontWeight="Bold" Margin="0,10,0,0" Height="35" />
                         </StackPanel>
@@ -88,10 +99,13 @@ $XAML_MainWindow = @"
                                     <TextBlock Text="Actions in this tab modify target hosts. Ensure proper authorization before execution." Foreground="#990000" FontSize="11" TextWrapping="Wrap" Margin="0,3,0,0" />
                                 </StackPanel>
                             </Border>
+                            <Border Background="#FFF0F0" BorderBrush="#FFC0C0" BorderThickness="1" CornerRadius="4" Padding="6" Margin="0,0,0,10">
+                                <TextBlock Name="ContainTargetBannerTextBlock" Text="🎯 Active Target(s) (0): None" Foreground="#990000" FontSize="11" FontWeight="SemiBold" TextWrapping="Wrap" />
+                            </Border>
+                            <Label Content="Search / Filter Actions" FontWeight="Bold" />
+                            <TextBox Name="ContainFilterTextBox" ToolTip="Type to filter containment actions..." Margin="0,2,0,8" Height="24" />
                             <Label Content="Select Containment Action" FontWeight="Bold" />
                             <ComboBox Name="ContainActionComboBox" DisplayMemberPath="Name" Margin="0,5,0,0" />
-                            <Label Content="Containment Arguments / Path (Optional)" FontWeight="Bold" Margin="0,10,0,0" />
-                            <TextBox Name="ContainArgumentsTextBox" ToolTip="Parameters will be collected via popup for specialized containment functions." Height="25" />
                             <Button Name="ExecuteContainButton" Content="⚠ Execute Containment Action" FontWeight="Bold" Margin="0,15,0,0" Height="35" Background="#FFE0E0" Foreground="DarkRed" BorderBrush="#CC0000" />
                         </StackPanel>
                     </ScrollViewer>
@@ -116,9 +130,13 @@ $XAML_MainWindow = @"
             </Grid.ColumnDefinitions>
             <RichTextBox Name="OutputConsole" IsReadOnly="True" VerticalScrollBarVisibility="Auto" FontFamily="Consolas" />
             <StackPanel Grid.Column="1" VerticalAlignment="Top" Margin="5,0,0,0">
-                <Button Name="ClearConsoleButton" Content="Clear Console" Width="100" Margin="0,0,0,5" />
-                <Button Name="CancelJobsButton" Content="Cancel Jobs" Width="100" Margin="0,0,0,5" />
-                <Button Name="ExportResultsButton" Content="Export Results..." Width="100" />
+                <Button Name="ClearConsoleButton" Content="Clear Console" Width="120" Margin="0,0,0,5" />
+                <Button Name="CancelJobsButton" Content="Cancel Jobs" Width="120" Margin="0,0,0,5" />
+                <Button Name="ExportResultsButton" Content="Export Results..." Width="120" Margin="0,0,0,10" />
+                
+                <Separator Margin="0,0,0,8" />
+                <Label Content="Filter Console Host:" FontSize="10" FontWeight="Bold" Padding="0,2" />
+                <ComboBox Name="ConsoleHostFilterComboBox" Width="120" Margin="0,0,0,5" />
             </StackPanel>
         </Grid>
         <StatusBar Grid.Row="3" Margin="0,5,0,0" Background="#F0F0F0">
@@ -134,27 +152,67 @@ $XAML_MainWindow = @"
 "@
 #endregion
 
-#region Globals & Helper Functions
+#region Globals &amp; Helper Functions
 $Global:ActiveJobs = @{}
 $Global:ModulePath = ""
 $Global:LastJobResults = $null
+$Global:ConsoleLogBuffer = [System.Collections.Generic.List[PSCustomObject]]::new()
+$Global:KnownConsoleHosts = [System.Collections.Generic.List[string]]::new()
+$Global:KnownConsoleHosts.Add("All Hosts")
+$Global:AllInvestigativeFuncs = @()
+$Global:AllContainmentFuncs = @()
 
 function Add-OutputLine {
     [CmdletBinding()]
-    param([string]$Text, [string]$Color = "Black")
-    $ui.Window.Dispatcher.Invoke([Action]{
-        $paragraph = [System.Windows.Documents.Paragraph]::new()
-        $run = [System.Windows.Documents.Run]::new($Text)
-        $run.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString($Color))
-        $paragraph.Inlines.Add($run)
-        $ui.OutputConsole.Document.Blocks.Add($paragraph)
-        $ui.OutputConsole.ScrollToEnd()
-    })
+    param([string]$Text, [string]$Color = "Black", [string]$HostName = "")
+    
+    $Global:ConsoleLogBuffer.Add([PSCustomObject]@{ Text = $Text; Color = $Color; HostName = $HostName })
+    
+    if ($HostName -and $ui.ConsoleHostFilterComboBox) {
+        $ui.Window.Dispatcher.Invoke([Action]{
+            if ($HostName -notin $Global:KnownConsoleHosts) {
+                $Global:KnownConsoleHosts.Add($HostName)
+                $ui.ConsoleHostFilterComboBox.ItemsSource = @($Global:KnownConsoleHosts)
+            }
+        })
+    }
+
+    $selectedFilter = if ($ui.ConsoleHostFilterComboBox -and $ui.ConsoleHostFilterComboBox.SelectedItem) { $ui.ConsoleHostFilterComboBox.SelectedItem } else { "All Hosts" }
+    
+    if ($selectedFilter -eq "All Hosts" -or -not $HostName -or $selectedFilter -eq $HostName) {
+        $ui.Window.Dispatcher.Invoke([Action]{
+            $paragraph = [System.Windows.Documents.Paragraph]::new()
+            $run = [System.Windows.Documents.Run]::new($Text)
+            $run.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString($Color))
+            $paragraph.Inlines.Add($run)
+            $ui.OutputConsole.Document.Blocks.Add($paragraph)
+            $ui.OutputConsole.ScrollToEnd()
+        })
+    }
+}
+
+function Redraw-Console {
+    $selectedFilter = if ($ui.ConsoleHostFilterComboBox -and $ui.ConsoleHostFilterComboBox.SelectedItem) { $ui.ConsoleHostFilterComboBox.SelectedItem } else { "All Hosts" }
+    $ui.OutputConsole.Document.Blocks.Clear()
+    foreach ($entry in $Global:ConsoleLogBuffer) {
+        if ($selectedFilter -eq "All Hosts" -or -not $entry.HostName -or $selectedFilter -eq $entry.HostName) {
+            $paragraph = [System.Windows.Documents.Paragraph]::new()
+            $run = [System.Windows.Documents.Run]::new($entry.Text)
+            $run.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString($entry.Color))
+            $paragraph.Inlines.Add($run)
+            $ui.OutputConsole.Document.Blocks.Add($paragraph)
+        }
+    }
+    $ui.OutputConsole.ScrollToEnd()
 }
 
 function Update-ComputerListView {
     $computers = @($ui.ComputerInputTextBox.Text.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     $ui.ComputerListView.ItemsSource = $computers
+    $count = $computers.Count
+    $targetText = if ($count -gt 0) { "🎯 Active Target(s) ($count): $($computers -join ', ')" } else { "🎯 Active Target(s) (0): None" }
+    if ($ui.RunTargetBannerTextBlock) { $ui.RunTargetBannerTextBlock.Text = $targetText }
+    if ($ui.ContainTargetBannerTextBlock) { $ui.ContainTargetBannerTextBlock.Text = $targetText }
 }
 
 function Update-ScriptDescriptionView {
@@ -1090,14 +1148,6 @@ function Show-AddRemoteFirewallRuleDialog {
 $ui.ComputerInputTextBox.add_TextChanged({ Update-ComputerListView })
 $ui.ScriptSelectionComboBox.add_SelectionChanged({
     Update-ScriptDescriptionView
-    $selectedScript = $ui.ScriptSelectionComboBox.SelectedItem
-    if ($selectedScript -and ($selectedScript.Name -in @('Get-EVTX', 'Get-CriticalEventXML'))) {
-        $ui.ArgumentsTextBox.IsEnabled = $false
-        $ui.ArgumentsTextBox.ToolTip = "Parameters for '$($selectedScript.Name)' will be collected via a dedicated popup dialog."
-    } else {
-        $ui.ArgumentsTextBox.IsEnabled = $true
-        $ui.ArgumentsTextBox.ToolTip = "Enter arguments or paths for the function (e.g. C:\Windows\System32\drivers\etc\hosts)"
-    }
 })
 
 $ui.GetInfoButton.add_Click({
@@ -1204,11 +1254,6 @@ $ui.RunScriptButton.add_Click({
         }
         $extraParams['BeginTime'] = $dateRes.BeginTime
         $extraParams['EndTime']   = $dateRes.EndTime
-    }
-    else {
-        if (-not [string]::IsNullOrWhiteSpace($ui.ArgumentsTextBox.Text)) {
-            $extraParams['Path'] = $ui.ArgumentsTextBox.Text
-        }
     }
 
     Add-OutputLine -Text "Executing function '$funcName' (Asynchronous)..." -Color "Blue"
@@ -1321,13 +1366,6 @@ $ui.ContainActionComboBox.add_SelectionChanged({
             $ui.ScriptDescriptionViewer.Document = $doc
         } catch {}
     }
-    if ($selectedScript -and ($selectedScript.Name -in @('Get-RemoteArtifact', 'Reset-ADUserPassword', 'Stop-RemoteProcess', 'Remove-RemoteItem', 'Stop-RemoteService', 'Remove-RemoteService', 'Remove-RemoteScheduledTask', 'Remove-RemoteRegistryKey', 'Add-RemoteFirewallRule'))) {
-        $ui.ContainArgumentsTextBox.IsEnabled = $false
-        $ui.ContainArgumentsTextBox.ToolTip = "Parameters for '$($selectedScript.Name)' will be collected via a dedicated popup dialog."
-    } else {
-        $ui.ContainArgumentsTextBox.IsEnabled = $true
-        $ui.ContainArgumentsTextBox.ToolTip = "Enter arguments or target paths for the containment action."
-    }
 })
 
 $ui.ExecuteContainButton.add_Click({
@@ -1400,11 +1438,6 @@ $ui.ExecuteContainButton.add_Click({
         $extraParams['Protocol']      = $fwRes.Protocol
         if ($fwRes.RemoteAddress) { $extraParams['RemoteAddress'] = $fwRes.RemoteAddress }
         if ($fwRes.LocalPort)     { $extraParams['LocalPort']     = $fwRes.LocalPort }
-    }
-    else {
-        if (-not [string]::IsNullOrWhiteSpace($ui.ContainArgumentsTextBox.Text)) {
-            $extraParams['Path'] = $ui.ContainArgumentsTextBox.Text
-        }
     }
 
     Add-OutputLine -Text "⚠ Executing CONTAINMENT ACTION '$funcName' (Asynchronous)..." -Color "DarkRed"
@@ -1482,6 +1515,49 @@ $ui.ExecuteContainButton.add_Click({
     }
 })
 
+$ui.RemoveSelectedTargetButton.add_Click({
+    $selected = @($ui.ComputerListView.SelectedItems)
+    if ($selected.Count -gt 0) {
+        $current = @($ui.ComputerInputTextBox.Text.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $remaining = @($current | Where-Object { $_ -notin $selected })
+        $ui.ComputerInputTextBox.Text = $remaining -join ", "
+        Update-ComputerListView
+    }
+})
+
+$ui.ClearAllTargetsButton.add_Click({
+    $ui.ComputerInputTextBox.Text = ""
+    Update-ComputerListView
+})
+
+if ($ui.FunctionFilterTextBox) {
+    $ui.FunctionFilterTextBox.add_TextChanged({
+        $filter = $ui.FunctionFilterTextBox.Text.Trim()
+        if ([string]::IsNullOrWhiteSpace($filter)) {
+            $ui.ScriptSelectionComboBox.ItemsSource = $Global:AllInvestigativeFuncs
+        } else {
+            $ui.ScriptSelectionComboBox.ItemsSource = @($Global:AllInvestigativeFuncs | Where-Object { $_.Name -like "*$filter*" })
+        }
+        if ($ui.ScriptSelectionComboBox.Items.Count -gt 0) { $ui.ScriptSelectionComboBox.SelectedIndex = 0 }
+    })
+}
+
+if ($ui.ContainFilterTextBox) {
+    $ui.ContainFilterTextBox.add_TextChanged({
+        $filter = $ui.ContainFilterTextBox.Text.Trim()
+        if ([string]::IsNullOrWhiteSpace($filter)) {
+            $ui.ContainActionComboBox.ItemsSource = $Global:AllContainmentFuncs
+        } else {
+            $ui.ContainActionComboBox.ItemsSource = @($Global:AllContainmentFuncs | Where-Object { $_.Name -like "*$filter*" })
+        }
+        if ($ui.ContainActionComboBox.Items.Count -gt 0) { $ui.ContainActionComboBox.SelectedIndex = 0 }
+    })
+}
+
+if ($ui.ConsoleHostFilterComboBox) {
+    $ui.ConsoleHostFilterComboBox.add_SelectionChanged({ Redraw-Console })
+}
+
 $ui.CancelJobsButton.add_Click({
     foreach ($jobId in @($Global:ActiveJobs.Keys)) {
         try { Stop-Job $Global:ActiveJobs[$jobId] -Force; Remove-Job $Global:ActiveJobs[$jobId] -Force } catch {}
@@ -1490,7 +1566,10 @@ $ui.CancelJobsButton.add_Click({
     Add-OutputLine -Text "All running jobs have been cancelled." -Color "OrangeRed"
 })
 
-$ui.ClearConsoleButton.add_Click({ $ui.OutputConsole.Document.Blocks.Clear() })
+$ui.ClearConsoleButton.add_Click({
+    $Global:ConsoleLogBuffer.Clear()
+    Redraw-Console
+})
 
 $ui.ApplyCredentialsButton.add_Click({
     $user = $ui.UsernameTextBox.Text
@@ -1566,11 +1645,11 @@ $timer.Add_Tick({
                 foreach ($item in $allResults) {
                     $comp = if ($item.PSComputerName) { $item.PSComputerName } else { "Output" }
                     if ($item -is [System.Management.Automation.ErrorRecord]) {
-                        Add-OutputLine -Text "[$comp] ERROR: $($item.Exception.Message)" -Color "Red"
+                        Add-OutputLine -Text "[$comp] ERROR: $($item.Exception.Message)" -Color "Red" -HostName $comp
                     } else {
                         $resultsList.Add($item)
                         ($item | Out-String).Split("`n") | ForEach-Object {
-                            if (-not [string]::IsNullOrWhiteSpace($_)) { Add-OutputLine -Text "[$comp] $($_.Trim())" -Color "Black" }
+                            if (-not [string]::IsNullOrWhiteSpace($_)) { Add-OutputLine -Text "[$comp] $($_.Trim())" -Color "Black" -HostName $comp }
                         }
                     }
                 }
@@ -1624,19 +1703,24 @@ try {
 
         $allFuncs = Get-Command -Module functions -CommandType Function | Sort-Object Name
         if ($allFuncs) {
-            $investigativeFuncs = @($allFuncs | Where-Object { $_.Name -notin $containmentNames })
-            $containmentFuncs   = @($allFuncs | Where-Object { $_.Name -in $containmentNames })
+            $Global:AllInvestigativeFuncs = @($allFuncs | Where-Object { $_.Name -notin $containmentNames })
+            $Global:AllContainmentFuncs   = @($allFuncs | Where-Object { $_.Name -in $containmentNames })
 
-            $ui.ScriptSelectionComboBox.ItemsSource = $investigativeFuncs
-            if ($investigativeFuncs.Count -gt 0) { $ui.ScriptSelectionComboBox.SelectedIndex = 0 }
+            $ui.ScriptSelectionComboBox.ItemsSource = $Global:AllInvestigativeFuncs
+            if ($Global:AllInvestigativeFuncs.Count -gt 0) { $ui.ScriptSelectionComboBox.SelectedIndex = 0 }
 
-            $ui.ContainActionComboBox.ItemsSource = $containmentFuncs
-            if ($containmentFuncs.Count -gt 0) { $ui.ContainActionComboBox.SelectedIndex = 0 }
+            $ui.ContainActionComboBox.ItemsSource = $Global:AllContainmentFuncs
+            if ($Global:AllContainmentFuncs.Count -gt 0) { $ui.ContainActionComboBox.SelectedIndex = 0 }
 
-            Add-OutputLine -Text "Loaded $($investigativeFuncs.Count) investigative function(s) and $($containmentFuncs.Count) containment action(s) from module." -Color "Green"
+            Add-OutputLine -Text "Loaded $($Global:AllInvestigativeFuncs.Count) investigative function(s) and $($Global:AllContainmentFuncs.Count) containment action(s) from module." -Color "Green"
         } else {
             Add-OutputLine -Text "No functions found in module functions." -Color "DarkOrange"
         }
+    }
+
+    if ($ui.ConsoleHostFilterComboBox) {
+        $ui.ConsoleHostFilterComboBox.ItemsSource = @($Global:KnownConsoleHosts)
+        $ui.ConsoleHostFilterComboBox.SelectedIndex = 0
     }
 
     $ui.ComputerInputTextBox.Text = $env:COMPUTERNAME
