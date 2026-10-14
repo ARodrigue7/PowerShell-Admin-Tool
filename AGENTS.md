@@ -24,6 +24,7 @@
      }
      ```
    - **Performance Critical**: Always cache `$useCim = [bool](Get-Command Get-CimInstance ...)` ONCE at the top of the remote `ScriptBlock`, rather than calling `Get-Command` inside loops.
+   - **In-Memory Hierarchy & FIPS Hashing**: `Get-ProcessInfo` maps parent/grandparent IDs in-memory rather than issuing nested WMI queries inside loops, and uses FIPS-compliant SHA256 (with MD5 fallback) with explicit null checks to prevent `BitConverter.ToString` null exceptions on hardened/STIG hosts.
 
 4. **Baselining Functions**:
    - `Get-HostBaseline`: Queries host network state, processes, services, connections, shares, persistence (registry run keys, startup folders, scheduled tasks), logon history, local group members, shell folders, and prefetches. Default output path: `./Output/Baselines/HostBaselines_<timestamp>`.
@@ -47,7 +48,7 @@
    - `AdminTool.ps1` features a dedicated, red-styled **"Contain / Clear"** tab for destructive incident response actions (`Get-RemoteArtifact`, `Reset-ADUserPassword`, `Stop-RemoteProcess`, `Stop-RemoteService`, `Remove-RemoteService`, `Remove-RemoteScheduledTask`, `Remove-RemoteItem`, `Remove-RemoteRegistryKey`, `Add-RemoteFirewallRule`), keeping investigative queries safely separated.
    - All containment actions enforce interactive modal popup dialogs with operator confirmation warnings before execution.
    - Console warning output uses high-contrast `DarkGoldenrod` foreground text for high readability against the white background.
-   - `Get-RemoteArtifact` supports artifact modes (`Auto`, `File`, `Executable`, `Directory`). Executables are zipped and password-protected (default `infected` or custom prompt) on target before transfer. Directories are compressed into `.zip` packages. Supports `-CleanRemote` post-acquisition target removal.
+   - `Get-RemoteArtifact` supports artifact modes (`Auto`, `File`, `Executable`, `Directory`, `DirectoryZip`). Supports raw recursive directory copying (`Directory`) or remote-side compressed packages (`DirectoryZip` with ZipFile and Compress-Archive fallback). Executables are zipped and password-protected (default `infected` or custom prompt) on target before transfer. Supports `-CleanRemote` post-acquisition target removal.
    - `Reset-ADUserPassword` resets compromised AD account passwords with ADSI LDAP fallback, auto-generates 20-character complex passwords, unlocks locked accounts, and sets `pwdLastSet = 0`.
 
 8. **Timestamp Standard**:
@@ -55,12 +56,22 @@
      - Local: `(Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')`
      - UTC: `(Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffK')`
 
-9. **Credential Handling**:
+9. **Credential Handling & Multi-Domain Auth Profiles**:
    - Functions accept `[PSCredential]$Credential` parameter.
    - When running via `AdminTool.ps1` or background jobs, explicit UI credentials or `$null` (for default WSMan session context) are passed down. Avoid interactive prompts inside remote scriptblocks.
+   - **Session Credential Store (`$Global:SessionCredentialStore`)**: `AdminTool.ps1` dynamically detects caller session variables of type `[System.Management.Automation.PSCredential]` (e.g. `$corpCred`, `$dmzCred`) on startup and via the **Refresh** button.
+   - **Manual Credential Profiles**: Operators can input credentials with an optional Profile Name/Alias directly in the GUI; manual profiles are added to the store and selected in `CredentialSelectionComboBox`.
+   - **Tab Banners**: `RunTargetBannerTextBlock` and `ContainTargetBannerTextBlock` dynamically reflect both active target count and active authentication profile (`Active Target(s) (X): ... | Auth: $var (User)`).
+   - **Font & Icon Compatibility**: All UI controls, headers, banners, and log messages MUST strictly use standard ASCII characters. Do NOT use emojis or unicode icons (e.g., emojis display as missing glyphs on legacy Windows Server 2008 R2 / 2012 / 2012 R2 systems).
 
 10. **Documentation Separation Standard**:
     - **`AGENTS.md`**: Dedicated to developer guidelines, AI agent instructions, system architecture, fallback patterns, and technical rules.
     - **`README.md`**: Dedicated strictly to human operators as a clean User Guide & Operator How-To Manual.
+
+11. **Subnet WinRM Discovery & Target Scanning**:
+    - **Fast Socket Probing (`Find-WinRMTarget`)**: Instead of slow sequential `Test-NetConnection` queries (which carry 2-second timeouts per address), `Find-WinRMTarget` in `functions.psm1` uses `System.Net.Sockets.TcpClient` with async `WaitOne(timeoutMs)`. This permits sub-second host sweeps (e.g., 400ms per host or lower).
+    - **Subnet Sanitization**: Handles full CIDR prefixes (`192.168.1.0/24`), trailing periods (`192.168.1.`), and single IPs (`192.168.1.10`), extracting the base 3-octet subnet cleanly.
+    - **WPF Dispatcher Pumping**: `Show-SubnetScannerDialog` in `AdminTool.ps1` executes `[System.Windows.Threading.Dispatcher]::CurrentDispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)` during sweeps to ensure UI responsiveness, active status labels, and real-time progress bar tracking.
+    - **Authentication Verification**: Integrates with the selected credential profile (`Get-ActiveCredentialFromUI`) to perform `Test-WSMan` validation on open ports, filtering out responsive ports that do not accept WinRM authentication.
 
 

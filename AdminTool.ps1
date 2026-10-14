@@ -36,7 +36,14 @@ $XAML_MainWindow = @"
                         <StackPanel Margin="10">
                             <Label Content="Target Computers" FontWeight="Bold" />
                             <TextBox Name="ComputerInputTextBox" ToolTip="Enter computer names, comma-separated." />
-                            <Button Name="ImportFromFileButton" Content="Import from File..." Margin="0,5,0,0" />
+                            <Grid Margin="0,5,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Button Grid.Column="0" Name="ImportFromFileButton" Content="Import from File..." Margin="0,0,2,0" Height="25" />
+                                <Button Grid.Column="1" Name="ScanSubnetButton" Content="Scan Subnet..." Margin="2,0,0,0" Height="25" />
+                            </Grid>
                             <ListView Name="ComputerListView" Height="130" SelectionMode="Multiple" ScrollViewer.HorizontalScrollBarVisibility="Disabled" Margin="0,5,0,0">
                                 <ListView.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ListView.ItemsPanel>
                                 <ListView.ItemTemplate><DataTemplate>
@@ -54,22 +61,35 @@ $XAML_MainWindow = @"
                             
                             <Separator Margin="0,15,0,10" />
                             
-                            <Label Content="Alternate Credentials (Optional)" FontWeight="Bold" />
-                            <Grid>
-                                 <Grid.ColumnDefinitions>
-                                     <ColumnDefinition Width="Auto"/>
-                                     <ColumnDefinition Width="*" />
-                                 </Grid.ColumnDefinitions>
-                                 <Grid.RowDefinitions>
-                                     <RowDefinition />
-                                     <RowDefinition />
-                                 </Grid.RowDefinitions>
-                                 <Label Grid.Row="0" Grid.Column="0" Content="Username:" VerticalAlignment="Center"/>
-                                 <TextBox Grid.Row="0" Grid.Column="1" Name="UsernameTextBox" Margin="5" VerticalAlignment="Center"/>
-                                 <Label Grid.Row="1" Grid.Column="0" Content="Password:" VerticalAlignment="Center"/>
-                                 <PasswordBox Grid.Row="1" Grid.Column="1" Name="PasswordInputBox" Margin="5" VerticalAlignment="Center"/>
+                            <Label Content="Target Credentials / Auth Profile" FontWeight="Bold" />
+                            <Grid Margin="0,2,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <ComboBox Grid.Column="0" Name="CredentialSelectionComboBox" Margin="0,0,5,0" Height="26" VerticalContentAlignment="Center" />
+                                <Button Grid.Column="1" Name="RefreshCredentialsButton" Content="Refresh" Width="70" Height="26" />
                             </Grid>
-                            <Button Name="ApplyCredentialsButton" Content="Apply Credentials" Margin="0,5,0,0" />
+                            
+                            <Label Content="Add New Credential Profile" FontWeight="Bold" Margin="0,10,0,0" />
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition />
+                                    <RowDefinition />
+                                    <RowDefinition />
+                                </Grid.RowDefinitions>
+                                <Label Grid.Row="0" Grid.Column="0" Content="Profile Name:" VerticalAlignment="Center"/>
+                                <TextBox Grid.Row="0" Grid.Column="1" Name="CredentialAliasTextBox" Margin="5" VerticalAlignment="Center" ToolTip="Optional label (e.g. DMZ Admin, Corp DC)" />
+                                <Label Grid.Row="1" Grid.Column="0" Content="Username:" VerticalAlignment="Center"/>
+                                <TextBox Grid.Row="1" Grid.Column="1" Name="UsernameTextBox" Margin="5" VerticalAlignment="Center" ToolTip="Domain\User or User@domain" />
+                                <Label Grid.Row="2" Grid.Column="0" Content="Password:" VerticalAlignment="Center"/>
+                                <PasswordBox Grid.Row="2" Grid.Column="1" Name="PasswordInputBox" Margin="5" VerticalAlignment="Center"/>
+                            </Grid>
+                            <Button Name="ApplyCredentialsButton" Content="Add / Apply Credential" Margin="0,5,0,0" Height="26" />
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>
@@ -78,7 +98,7 @@ $XAML_MainWindow = @"
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <StackPanel Margin="10">
                             <Border Background="#F0F7FF" BorderBrush="#BEE0FF" BorderThickness="1" CornerRadius="4" Padding="6" Margin="0,0,0,10">
-                                <TextBlock Name="RunTargetBannerTextBlock" Text="🎯 Active Target(s) (0): None" Foreground="#005A9C" FontSize="11" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                <TextBlock Name="RunTargetBannerTextBlock" Text="Active Target(s) (0): None" Foreground="#005A9C" FontSize="11" FontWeight="SemiBold" TextWrapping="Wrap" />
                             </Border>
                             <Label Content="Search / Filter Functions" FontWeight="Bold" />
                             <TextBox Name="FunctionFilterTextBox" ToolTip="Type to filter functions in real time..." Margin="0,2,0,8" Height="24" />
@@ -90,23 +110,23 @@ $XAML_MainWindow = @"
                     </ScrollViewer>
                 </TabItem>
 
-                <TabItem Header="⚠ Contain / Clear">
+                <TabItem Header="Contain / Clear">
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <StackPanel Margin="10">
                             <Border Background="#FFF5F5" BorderBrush="#FFCCCC" BorderThickness="1" CornerRadius="4" Padding="8" Margin="0,0,0,10">
                                 <StackPanel>
-                                    <TextBlock Text="⚠ INCIDENT RESPONSE ACTIONS" FontWeight="Bold" Foreground="DarkRed" FontSize="13" />
+                                    <TextBlock Text="INCIDENT RESPONSE ACTIONS" FontWeight="Bold" Foreground="DarkRed" FontSize="13" />
                                     <TextBlock Text="Actions in this tab modify target hosts. Ensure proper authorization before execution." Foreground="#990000" FontSize="11" TextWrapping="Wrap" Margin="0,3,0,0" />
                                 </StackPanel>
                             </Border>
                             <Border Background="#FFF0F0" BorderBrush="#FFC0C0" BorderThickness="1" CornerRadius="4" Padding="6" Margin="0,0,0,10">
-                                <TextBlock Name="ContainTargetBannerTextBlock" Text="🎯 Active Target(s) (0): None" Foreground="#990000" FontSize="11" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                <TextBlock Name="ContainTargetBannerTextBlock" Text="Active Target(s) (0): None" Foreground="#990000" FontSize="11" FontWeight="SemiBold" TextWrapping="Wrap" />
                             </Border>
                             <Label Content="Search / Filter Actions" FontWeight="Bold" />
                             <TextBox Name="ContainFilterTextBox" ToolTip="Type to filter containment actions..." Margin="0,2,0,8" Height="24" />
                             <Label Content="Select Containment Action" FontWeight="Bold" />
                             <ComboBox Name="ContainActionComboBox" DisplayMemberPath="Name" Margin="0,5,0,0" />
-                            <Button Name="ExecuteContainButton" Content="⚠ Execute Containment Action" FontWeight="Bold" Margin="0,15,0,0" Height="35" Background="#FFE0E0" Foreground="DarkRed" BorderBrush="#CC0000" />
+                            <Button Name="ExecuteContainButton" Content="Execute Containment Action" FontWeight="Bold" Margin="0,15,0,0" Height="35" Background="#FFE0E0" Foreground="DarkRed" BorderBrush="#CC0000" />
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>
@@ -206,13 +226,27 @@ function Redraw-Console {
     $ui.OutputConsole.ScrollToEnd()
 }
 
+function Update-TargetBanners {
+    $computers = @($ui.ComputerInputTextBox.Text.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $count = $computers.Count
+    $targetSummary = if ($count -gt 0) { "Active Target(s) ($count): $($computers -join ', ')" } else { "Active Target(s) (0): None" }
+    
+    $selectedCredLabel = if ($ui.CredentialSelectionComboBox -and $ui.CredentialSelectionComboBox.SelectedItem) {
+        $ui.CredentialSelectionComboBox.SelectedItem
+    } else {
+        "[Current Windows Session]"
+    }
+    
+    $bannerText = "$targetSummary  |  Auth: $selectedCredLabel"
+    
+    if ($ui.RunTargetBannerTextBlock) { $ui.RunTargetBannerTextBlock.Text = $bannerText }
+    if ($ui.ContainTargetBannerTextBlock) { $ui.ContainTargetBannerTextBlock.Text = $bannerText }
+}
+
 function Update-ComputerListView {
     $computers = @($ui.ComputerInputTextBox.Text.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     $ui.ComputerListView.ItemsSource = $computers
-    $count = $computers.Count
-    $targetText = if ($count -gt 0) { "🎯 Active Target(s) ($count): $($computers -join ', ')" } else { "🎯 Active Target(s) (0): None" }
-    if ($ui.RunTargetBannerTextBlock) { $ui.RunTargetBannerTextBlock.Text = $targetText }
-    if ($ui.ContainTargetBannerTextBlock) { $ui.ContainTargetBannerTextBlock.Text = $targetText }
+    Update-TargetBanners
 }
 
 function Update-ScriptDescriptionView {
@@ -243,11 +277,84 @@ function Update-ScriptDescriptionView {
     $ui.ScriptDescriptionViewer.Document = $doc
 }
 
-function New-PSCredentialFromUI {
-    if (-not [string]::IsNullOrWhiteSpace($ui.UsernameTextBox.Text) -and -not [string]::IsNullOrWhiteSpace($ui.PasswordInputBox.Password)) {
+function Update-CredentialStore {
+    param([string]$PreserveSelection)
+
+    $currentSelectedKey = if ($PreserveSelection) {
+        $PreserveSelection
+    } elseif ($ui.CredentialSelectionComboBox -and $ui.CredentialSelectionComboBox.SelectedItem) {
+        $ui.CredentialSelectionComboBox.SelectedItem
+    } else {
+        $null
+    }
+
+    if ($null -eq $Global:SessionCredentialStore) {
+        $Global:SessionCredentialStore = [ordered]@{}
+    }
+
+    $newStore = [ordered]@{}
+    $newStore["[Current Windows Session]"] = $null
+
+    # 1. Discover session variables of type PSCredential
+    $excludeVars = @('cred', 'credential', 'activeCred', 'selectedCred', '_', 'this', 'PSItem', 'MyInvocation')
+    $detectedVars = Get-Variable -ErrorAction SilentlyContinue | Where-Object {
+        $_.Name -notin $excludeVars
+    }
+
+    foreach ($v in $detectedVars) {
+        try {
+            if ($v.Value -is [System.Management.Automation.PSCredential]) {
+                $uName = try { $v.Value.UserName } catch { "Unknown" }
+                $label = "`$$($v.Name) ($uName)"
+                $newStore[$label] = $v.Value
+            }
+        } catch {}
+    }
+
+    # 2. Preserve manual entries previously added via UI
+    foreach ($key in $Global:SessionCredentialStore.Keys) {
+        if ($key.StartsWith("[Manual") -and $Global:SessionCredentialStore[$key] -ne $null) {
+            $newStore[$key] = $Global:SessionCredentialStore[$key]
+        }
+    }
+
+    $Global:SessionCredentialStore = $newStore
+
+    if ($ui.CredentialSelectionComboBox) {
+        $keys = @($Global:SessionCredentialStore.Keys)
+        $ui.CredentialSelectionComboBox.ItemsSource = $keys
+
+        if ($currentSelectedKey -and ($keys -contains $currentSelectedKey)) {
+            $ui.CredentialSelectionComboBox.SelectedItem = $currentSelectedKey
+        } elseif ($keys.Count -gt 0) {
+            $ui.CredentialSelectionComboBox.SelectedIndex = 0
+        }
+    }
+
+    Update-TargetBanners
+}
+
+function Get-ActiveCredentialFromUI {
+    if ($ui.CredentialSelectionComboBox -and $ui.CredentialSelectionComboBox.SelectedItem) {
+        $selectedKey = $ui.CredentialSelectionComboBox.SelectedItem
+        if ($Global:SessionCredentialStore -and $Global:SessionCredentialStore.Contains($selectedKey)) {
+            $stored = $Global:SessionCredentialStore[$selectedKey]
+            if ($null -ne $stored) { return $stored }
+            if ($selectedKey -eq "[Current Windows Session]") { return $null }
+        }
+    }
+
+    # Fallback if user entered credentials directly in textboxes without clicking Add/Apply
+    if ($ui.UsernameTextBox -and $ui.PasswordInputBox -and
+        -not [string]::IsNullOrWhiteSpace($ui.UsernameTextBox.Text) -and 
+        -not [string]::IsNullOrWhiteSpace($ui.PasswordInputBox.Password)) {
         return [System.Management.Automation.PSCredential]::new($ui.UsernameTextBox.Text, $ui.PasswordInputBox.SecurePassword)
     }
     return $null
+}
+
+function New-PSCredentialFromUI {
+    return Get-ActiveCredentialFromUI
 }
 #endregion
 
@@ -282,7 +389,255 @@ $ui.ImportFromFileButton.add_Click({
     }
 })
 
+if ($ui.ScanSubnetButton) {
+    $ui.ScanSubnetButton.add_Click({
+        Show-SubnetScannerDialog
+    })
+}
+
 #region Interactive Modal Dialogs
+function Show-SubnetScannerDialog {
+    $defaultSubnet = "192.168.1"
+    try {
+        $localIP = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254.*" } | Select-Object -First 1).IPAddress
+        if ($localIP -and $localIP -match "^(\d+\.\d+\.\d+)\.\d+$") {
+            $defaultSubnet = $Matches[1]
+        }
+    } catch {}
+
+    $xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Subnet WinRM Target Discovery" Height="500" Width="490" WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+    <Grid Margin="15">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="Scan Subnet for Active WinRM Hosts" FontWeight="Bold" FontSize="14" Margin="0,0,0,3"/>
+        <TextBlock Grid.Row="1" Text="Probes TCP port and verifies WinRM connectivity across an IP range." Foreground="Gray" Margin="0,0,0,10"/>
+
+        <Grid Grid.Row="2" Margin="0,0,0,5">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="105"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <Label Grid.Row="0" Grid.Column="0" Content="Subnet Base:" VerticalAlignment="Center"/>
+            <TextBox Grid.Row="0" Grid.Column="1" Name="TxtSubnet" Text="$defaultSubnet" Margin="2" Height="24" ToolTip="Subnet prefix, e.g. 192.168.1 or 10.0.0" />
+
+            <Label Grid.Row="1" Grid.Column="0" Content="Host Range:" VerticalAlignment="Center"/>
+            <Grid Grid.Row="1" Grid.Column="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBox Grid.Column="0" Name="TxtStartOctet" Text="1" Margin="2" Height="24" ToolTip="Start host number (1-254)" />
+                <TextBlock Grid.Column="1" Text="to" VerticalAlignment="Center" Margin="6,0"/>
+                <TextBox Grid.Column="2" Name="TxtEndOctet" Text="100" Margin="2" Height="24" ToolTip="End host number (1-254)" />
+            </Grid>
+
+            <Label Grid.Row="2" Grid.Column="0" Content="Port / Timeout:" VerticalAlignment="Center"/>
+            <Grid Grid.Row="2" Grid.Column="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="65"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBox Grid.Column="0" Name="TxtPort" Text="5985" Margin="2" Height="24" ToolTip="Default: 5985 for HTTP WinRM, 5986 for HTTPS" />
+                <Label Grid.Column="1" Content="Timeout (ms):" VerticalAlignment="Center" Margin="4,0,2,0"/>
+                <TextBox Grid.Column="2" Name="TxtTimeout" Text="400" Margin="2" Height="24" ToolTip="TCP connection timeout per host in milliseconds" />
+            </Grid>
+
+            <CheckBox Grid.Row="3" Grid.Column="1" Name="ChkVerifyWSMan" Content="Verify WinRM Auth with Active Profile" IsChecked="True" Margin="2,6,2,4"/>
+        </Grid>
+
+        <Grid Grid.Row="3" Margin="0,5,0,5">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="100"/>
+            </Grid.ColumnDefinitions>
+            <ProgressBar Grid.Column="0" Name="ScanProgress" Height="22" Margin="0,0,5,0" Minimum="0" Maximum="100" />
+            <Button Grid.Column="1" Name="BtnScan" Content="Start Scan" Height="26" FontWeight="Bold" />
+        </Grid>
+
+        <TextBlock Grid.Row="4" Name="TxtStatus" Text="Ready to scan." Foreground="#005A9C" FontSize="11" FontWeight="SemiBold" Margin="0,2,0,5"/>
+
+        <GroupBox Grid.Row="5" Header="Discovered WinRM Targets" Margin="0,2,0,10">
+            <ListBox Name="LstResults" SelectionMode="Multiple" Margin="5"/>
+        </GroupBox>
+
+        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,5,0,0">
+            <Button Name="BtnAppend" Content="Append to Targets" Width="130" Height="26" Margin="0,0,5,0" IsEnabled="False" />
+            <Button Name="BtnReplace" Content="Replace Targets" Width="110" Height="26" Margin="0,0,5,0" IsEnabled="False" />
+            <Button Name="BtnClose" Content="Close" Width="70" Height="26" IsCancel="True" />
+        </StackPanel>
+    </Grid>
+</Window>
+"@
+    try {
+        [xml]$xmlDoc = $xaml
+        $reader = [System.Xml.XmlNodeReader]::new($xmlDoc)
+        $dlg = [Windows.Markup.XamlReader]::Load($reader)
+        if ($ui.Window) { $dlg.Owner = $ui.Window }
+
+        $txtSubnet       = $dlg.FindName("TxtSubnet")
+        $txtStartOctet   = $dlg.FindName("TxtStartOctet")
+        $txtEndOctet     = $dlg.FindName("TxtEndOctet")
+        $txtPort         = $dlg.FindName("TxtPort")
+        $txtTimeout      = $dlg.FindName("TxtTimeout")
+        $chkVerifyWSMan  = $dlg.FindName("ChkVerifyWSMan")
+        $scanProgress    = $dlg.FindName("ScanProgress")
+        $btnScan         = $dlg.FindName("BtnScan")
+        $txtStatus       = $dlg.FindName("TxtStatus")
+        $lstResults      = $dlg.FindName("LstResults")
+        $btnAppend       = $dlg.FindName("BtnAppend")
+        $btnReplace      = $dlg.FindName("BtnReplace")
+        $btnClose        = $dlg.FindName("BtnClose")
+
+        $btnScan.add_Click({
+            $rawSubnet = $txtSubnet.Text.Trim()
+            $clean = $rawSubnet -replace "/\d+$", ""
+            $clean = $clean.Trim().TrimEnd(".")
+            if ($clean -match "^(\d+\.\d+\.\d+)\.\d+$") { $clean = $Matches[1] }
+
+            if ([string]::IsNullOrWhiteSpace($clean)) {
+                [System.Windows.MessageBox]::Show("Please enter a valid subnet base (e.g. 192.168.1).", "Validation Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+                return
+            }
+
+            $start = 1
+            $end = 100
+            if (-not [int]::TryParse($txtStartOctet.Text.Trim(), [ref]$start) -or -not [int]::TryParse($txtEndOctet.Text.Trim(), [ref]$end)) {
+                [System.Windows.MessageBox]::Show("Host range must be integers between 1 and 254.", "Validation Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+                return
+            }
+
+            if ($start -lt 1 -or $start -gt 254 -or $end -lt 1 -or $end -gt 254 -or $start -gt $end) {
+                [System.Windows.MessageBox]::Show("Host range must satisfy: 1 <= Start <= End <= 254.", "Validation Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+                return
+            }
+
+            $port = 5985
+            if (-not [int]::TryParse($txtPort.Text.Trim(), [ref]$port) -or $port -lt 1 -or $port -gt 65535) { $port = 5985 }
+
+            $timeoutMs = 400
+            if (-not [int]::TryParse($txtTimeout.Text.Trim(), [ref]$timeoutMs) -or $timeoutMs -lt 50) { $timeoutMs = 400 }
+
+            $verifyAuth = [bool]$chkVerifyWSMan.IsChecked
+            $activeCred = Get-ActiveCredentialFromUI
+
+            $btnScan.IsEnabled = $false
+            $btnAppend.IsEnabled = $false
+            $btnReplace.IsEnabled = $false
+            $lstResults.Items.Clear()
+
+            $total = ($end - $start + 1)
+            $scanProgress.Minimum = 0
+            $scanProgress.Maximum = $total
+            $scanProgress.Value = 0
+
+            $foundCount = 0
+            $tested = 0
+
+            foreach ($octet in $start..$end) {
+                $tested++
+                $ip = "$clean.$octet"
+                $scanProgress.Value = $tested
+                $txtStatus.Text = "Probing $ip ($tested of $total)..."
+                [System.Windows.Threading.Dispatcher]::CurrentDispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+
+                $tcpOpen = $false
+                $client = $null
+                try {
+                    $client = New-Object System.Net.Sockets.TcpClient
+                    $asyncResult = $client.BeginConnect($ip, $port, $null, $null)
+                    if ($asyncResult.AsyncWaitHandle.WaitOne($timeoutMs, $false) -and $client.Connected) {
+                        $client.EndConnect($asyncResult)
+                        $tcpOpen = $true
+                    }
+                } catch {
+                    $tcpOpen = $false
+                } finally {
+                    if ($client) { $client.Close() }
+                }
+
+                if ($tcpOpen) {
+                    $isValid = $false
+                    if ($verifyAuth) {
+                        $txtStatus.Text = "Verifying WinRM auth on $ip..."
+                        [System.Windows.Threading.Dispatcher]::CurrentDispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+
+                        try {
+                            $wsParams = @{ ComputerName = $ip; ErrorAction = 'Stop' }
+                            if ($activeCred) {
+                                $wsParams['Credential'] = $activeCred
+                                $wsParams['Authentication'] = 'Negotiate'
+                            }
+                            $res = Test-WSMan @wsParams
+                            if ($res) { $isValid = $true }
+                        } catch {
+                            $isValid = $false
+                        }
+                    } else {
+                        $isValid = $true
+                    }
+
+                    if ($isValid) {
+                        $foundCount++
+                        $lstResults.Items.Add($ip) | Out-Null
+                    }
+                }
+            }
+
+            $scanProgress.Value = $total
+            $txtStatus.Text = "Scan completed. Discovered $foundCount active host(s)."
+            $btnScan.IsEnabled = $true
+
+            if ($lstResults.Items.Count -gt 0) {
+                $btnAppend.IsEnabled = $true
+                $btnReplace.IsEnabled = $true
+            }
+        })
+
+        $btnAppend.add_Click({
+            $selected = if ($lstResults.SelectedItems.Count -gt 0) { @($lstResults.SelectedItems) } else { @($lstResults.Items) }
+            $existing = if ($ui.ComputerInputTextBox.Text) {
+                @($ui.ComputerInputTextBox.Text.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+            } else { @() }
+            $merged = ($existing + $selected) | Select-Object -Unique
+            $ui.ComputerInputTextBox.Text = $merged -join ", "
+            Update-ComputerListView
+            Add-OutputLine -Text "Appended $($selected.Count) discovered host(s) to targets." -Color "Green"
+            $dlg.Close()
+        })
+
+        $btnReplace.add_Click({
+            $selected = if ($lstResults.SelectedItems.Count -gt 0) { @($lstResults.SelectedItems) } else { @($lstResults.Items) }
+            $ui.ComputerInputTextBox.Text = $selected -join ", "
+            Update-ComputerListView
+            Add-OutputLine -Text "Replaced targets with $($selected.Count) discovered host(s)." -Color "Green"
+            $dlg.Close()
+        })
+
+        $dlg.ShowDialog() | Out-Null
+    } catch {
+        [System.Windows.MessageBox]::Show("Error opening Subnet Discovery Dialog: $($_.Exception.Message)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error) | Out-Null
+    }
+}
 function Show-EVTXDialog {
     $xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -362,7 +717,7 @@ function Show-RemoteArtifactDialog {
     $xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Get-RemoteArtifact Target File &amp; Remediation" Height="360" Width="520" WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+        Title="Get-RemoteArtifact - File or Directory Retrieval &amp; Remediation" Height="370" Width="550" WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
     <Grid Margin="15">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -374,17 +729,18 @@ function Show-RemoteArtifactDialog {
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <TextBlock Grid.Row="0" Text="Remote Path to Retrieve:" FontWeight="Bold" FontSize="14" Margin="0,0,0,3"/>
-        <TextBlock Grid.Row="1" Text="Example: C:\Windows\Temp\suspect.exe or C:\Users\Public\Logs" Foreground="Gray" Margin="0,0,0,10"/>
+        <TextBlock Grid.Row="0" Text="Remote Path to Retrieve (File or Directory):" FontWeight="Bold" FontSize="14" Margin="0,0,0,3"/>
+        <TextBlock Grid.Row="1" Text="Example: C:\Windows\Temp\suspect.exe or C:\inetpub\logs" Foreground="Gray" Margin="0,0,0,10"/>
         <TextBox Name="TxtPath" Grid.Row="2" Height="25" Margin="0,0,0,10"/>
         
         <TextBlock Grid.Row="3" Text="Artifact Type / Handling Mode:" FontWeight="Bold" Margin="0,0,0,5"/>
-        <StackPanel Grid.Row="4" Orientation="Horizontal" Margin="5,0,0,10">
-            <RadioButton Name="RbAuto" Content="Auto-Detect" IsChecked="True" Margin="0,0,15,0"/>
-            <RadioButton Name="RbFile" Content="File (Raw)" Margin="0,0,15,0"/>
-            <RadioButton Name="RbExe" Content="Executable (Protected ZIP)" Margin="0,0,15,0"/>
-            <RadioButton Name="RbDir" Content="Directory (ZIP)" Margin="0,0,0,0"/>
-        </StackPanel>
+        <WrapPanel Grid.Row="4" Margin="5,0,0,10">
+            <RadioButton Name="RbAuto" Content="Auto-Detect" IsChecked="True" Margin="0,0,15,5"/>
+            <RadioButton Name="RbDir" Content="Directory (Folder Copy)" Margin="0,0,15,5"/>
+            <RadioButton Name="RbDirZip" Content="Directory (ZIP Archive)" Margin="0,0,15,5"/>
+            <RadioButton Name="RbFile" Content="File (Raw Copy)" Margin="0,0,15,5"/>
+            <RadioButton Name="RbExe" Content="Executable (Protected ZIP)" Margin="0,0,0,5"/>
+        </WrapPanel>
 
         <Grid Grid.Row="5" Margin="0,0,0,10">
             <Grid.ColumnDefinitions><ColumnDefinition Width="110"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
@@ -409,9 +765,10 @@ function Show-RemoteArtifactDialog {
         
         $txtPath        = $dlg.FindName("TxtPath")
         $rbAuto         = $dlg.FindName("RbAuto")
+        $rbDir          = $dlg.FindName("RbDir")
+        $rbDirZip       = $dlg.FindName("RbDirZip")
         $rbFile         = $dlg.FindName("RbFile")
         $rbExe          = $dlg.FindName("RbExe")
-        $rbDir          = $dlg.FindName("RbDir")
         $txtZipPassword = $dlg.FindName("TxtZipPassword")
         $chkCleanRemote = $dlg.FindName("ChkCleanRemote")
         $btnOK          = $dlg.FindName("BtnOK")
@@ -419,18 +776,20 @@ function Show-RemoteArtifactDialog {
         $rbExe.add_Checked({ $txtZipPassword.IsEnabled = $true })
         $rbFile.add_Checked({ $txtZipPassword.IsEnabled = $false })
         $rbDir.add_Checked({ $txtZipPassword.IsEnabled = $false })
+        $rbDirZip.add_Checked({ $txtZipPassword.IsEnabled = $false })
         $rbAuto.add_Checked({ $txtZipPassword.IsEnabled = $true })
 
         $btnOK.add_Click({
             if ([string]::IsNullOrWhiteSpace($txtPath.Text)) {
-                [System.Windows.MessageBox]::Show("Remote file path cannot be empty.", "Validation Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+                [System.Windows.MessageBox]::Show("Remote path cannot be empty.", "Validation Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
                 return
             }
 
             $mode = "Auto"
             if ($rbFile.IsChecked) { $mode = "File" }
-            elseif ($rbExe.IsChecked) { $mode = "Executable" }
             elseif ($rbDir.IsChecked) { $mode = "Directory" }
+            elseif ($rbDirZip.IsChecked) { $mode = "DirectoryZip" }
+            elseif ($rbExe.IsChecked) { $mode = "Executable" }
 
             if (($mode -eq "Executable" -or $mode -eq "Auto") -and [string]::IsNullOrWhiteSpace($txtZipPassword.Text)) {
                 [System.Windows.MessageBox]::Show("Please specify a password to protect the executable ZIP archive.", "Validation Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
@@ -1440,7 +1799,7 @@ $ui.ExecuteContainButton.add_Click({
         if ($fwRes.LocalPort)     { $extraParams['LocalPort']     = $fwRes.LocalPort }
     }
 
-    Add-OutputLine -Text "⚠ Executing CONTAINMENT ACTION '$funcName' (Asynchronous)..." -Color "DarkRed"
+    Add-OutputLine -Text "[!] Executing CONTAINMENT ACTION '$funcName' (Asynchronous)..." -Color "DarkRed"
     $cred = New-PSCredentialFromUI
     $modPath = $Global:ModulePath
 
@@ -1571,15 +1930,43 @@ $ui.ClearConsoleButton.add_Click({
     Redraw-Console
 })
 
+if ($ui.CredentialSelectionComboBox) {
+    $ui.CredentialSelectionComboBox.add_SelectionChanged({
+        Update-TargetBanners
+    })
+}
+
+if ($ui.RefreshCredentialsButton) {
+    $ui.RefreshCredentialsButton.add_Click({
+        Update-CredentialStore
+        Add-OutputLine -Text "Session credential variables refreshed." -Color "DarkGreen"
+    })
+}
+
 $ui.ApplyCredentialsButton.add_Click({
-    $user = $ui.UsernameTextBox.Text
-    $pass = $ui.PasswordInputBox.Password
+    $user = $ui.UsernameTextBox.Text.Trim()
+    $alias = if ($ui.CredentialAliasTextBox) { $ui.CredentialAliasTextBox.Text.Trim() } else { "" }
+
     if ([string]::IsNullOrWhiteSpace($user)) {
-        [System.Windows.MessageBox]::Show("Username cannot be empty when applying alternate credentials.", "Credentials Warning", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
-    } else {
-        Add-OutputLine -Text "Alternate credentials applied successfully for user: $user" -Color "DarkGreen"
-        [System.Windows.MessageBox]::Show("Credentials successfully applied to session.", "Success", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information) | Out-Null
+        [System.Windows.MessageBox]::Show("Username cannot be empty when adding credentials.", "Credentials Warning", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+        return
     }
+
+    $secPass = $ui.PasswordInputBox.SecurePassword
+    $newCred = [System.Management.Automation.PSCredential]::new($user, $secPass)
+
+    $profileName = if (-not [string]::IsNullOrWhiteSpace($alias)) { $alias } else { $user }
+    $label = "[Manual: $profileName] ($user)"
+
+    if ($null -eq $Global:SessionCredentialStore) {
+        $Global:SessionCredentialStore = [ordered]@{}
+    }
+    $Global:SessionCredentialStore[$label] = $newCred
+    Update-CredentialStore -PreserveSelection $label
+    $ui.PasswordInputBox.Clear()
+
+    Add-OutputLine -Text "Credential profile '$label' added and selected." -Color "DarkGreen"
+    [System.Windows.MessageBox]::Show("Credential profile successfully added and selected.", "Success", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information) | Out-Null
 })
 
 $ui.ExportResultsButton.add_Click({
@@ -1724,6 +2111,7 @@ try {
     }
 
     $ui.ComputerInputTextBox.Text = $env:COMPUTERNAME
+    Update-CredentialStore
     Update-ComputerListView
     Add-OutputLine -Text "Remote Admin Tool Ready. Module Mode Enabled." -Color "Green"
 } catch { 

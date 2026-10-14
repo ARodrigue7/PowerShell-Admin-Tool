@@ -27,10 +27,21 @@ function Get-ProcessInfo {
                 Get-WmiObject -Class Win32_Process
             }
             $processLookup = @{}
+            $parentLookup  = @{}
 
-            # Create a lookup table for process IDs and names
+            # Create lookup tables for process IDs, names, and parent IDs in-memory
             foreach ($process in $processes) {
-                $processLookup[$process.ProcessID] = $process.Name
+                if ($process.ProcessID) {
+                    $processLookup[$process.ProcessID] = $process.Name
+                    $parentLookup[$process.ProcessID]  = $process.ParentProcessID
+                }
+            }
+
+            # Prepare cryptographic hasher (FIPS-compliant SHA256 with MD5 fallback)
+            $hasher = try {
+                [System.Security.Cryptography.SHA256]::Create()
+            } catch {
+                try { [System.Security.Cryptography.MD5]::Create() } catch { $null }
             }
 
             $results = @()
@@ -42,23 +53,26 @@ function Get-ProcessInfo {
                 $grandparentProcessName = $null
                 $grandparentProcessID = $null
 
-                if ($parentProcessName) {
-                    $grandparentProcObj = if ($useCim) {
-                        Get-CimInstance -ClassName Win32_Process -Filter "ProcessID = $parentProcessID"
-                    } else {
-                        Get-WmiObject -Class Win32_Process -Filter "ProcessID = $parentProcessID"
-                    }
-                    $grandparentProcessID = ($grandparentProcObj | Select-Object -ExpandProperty ParentProcessID) -as [uint32]
-
-                    if ($grandparentProcessID -ne 0) {
-                        $grandparentProcessName = $processLookup[$grandparentProcessID] -as [string]
+                if ($parentProcessID -and $parentLookup.ContainsKey($parentProcessID)) {
+                    $gpID = $parentLookup[$parentProcessID] -as [uint32]
+                    if ($gpID -gt 0) {
+                        $grandparentProcessID = $gpID
+                        $grandparentProcessName = $processLookup[$gpID] -as [string]
                     }
                 }
 
-                $lineageHash = [System.Security.Cryptography.MD5]::Create().ComputeHash(
-                    [System.Text.Encoding]::UTF8.GetBytes("$grandparentProcessName|$parentProcessName|$($process.Name)")
-                )
-                $lineageHashString = [System.BitConverter]::ToString($lineageHash).Replace("-", "")
+                $lineageHashString = "N/A"
+                if ($hasher) {
+                    try {
+                        $lineageBytes = [System.Text.Encoding]::UTF8.GetBytes("$grandparentProcessName|$parentProcessName|$($process.Name)")
+                        $lineageHash = $hasher.ComputeHash($lineageBytes)
+                        if ($null -ne $lineageHash) {
+                            $lineageHashString = [System.BitConverter]::ToString($lineageHash).Replace("-", "")
+                        }
+                    } catch {
+                        $lineageHashString = "N/A"
+                    }
+                }
 
                 $results += [PSCustomObject]@{
                     "CSName"                 = $process.CSName
@@ -1527,6 +1541,100 @@ function Test-ComputerConnection {
     }
 }
 
+# Discover and validate active WinRM hosts across an IP range or subnet
+function Find-WinRMTarget {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true, Position = 0)]
+        [string]$Subnet,
+
+        [Parameter(Position = 1)]
+        [int]$Start = 1,
+
+        [Parameter(Position = 2)]
+        [int]$End = 100,
+
+        [Parameter()]
+        [int]$Port = 5985,
+
+        [Parameter()]
+        [int]$TimeoutMs = 400,
+
+        [Parameter()]
+        [System.Management.Automation.PSCredential]$Credential,
+
+        [Parameter()]
+        [switch]$SkipAuthCheck
+    )
+
+    Process {
+        $clean = $Subnet -replace "/\d+$", ""
+        $clean = $clean.Trim().TrimEnd(".")
+        if ($clean -match "^(\d+\.\d+\.\d+)\.\d+$") { $clean = $Matches[1] }
+
+        if ($Start -lt 1) { $Start = 1 }
+        if ($End -gt 254) { $End = 254 }
+        if ($Start -gt $End) {
+            Write-Error "Start range ($Start) cannot exceed End range ($End)."
+            return @()
+        }
+
+        $validTargets = [System.Collections.Generic.List[string]]::new()
+        Write-Output "Scanning subnet range '$clean.$Start' through '$clean.$End' on port $Port..."
+
+        foreach ($octet in $Start..$End) {
+            $ip = "$clean.$octet"
+            Write-Verbose "Probing $ip..."
+
+            $tcpOpen = $false
+            $client = $null
+            try {
+                $client = New-Object System.Net.Sockets.TcpClient
+                $asyncResult = $client.BeginConnect($ip, $Port, $null, $null)
+                if ($asyncResult.AsyncWaitHandle.WaitOne($TimeoutMs, $false) -and $client.Connected) {
+                    $client.EndConnect($asyncResult)
+                    $tcpOpen = $true
+                }
+            } catch {
+                $tcpOpen = $false
+            } finally {
+                if ($client) { $client.Close() }
+            }
+
+            if ($tcpOpen) {
+                if ($SkipAuthCheck) {
+                    Write-Output "[+] Port $Port Open: $ip"
+                    $validTargets.Add($ip)
+                } else {
+                    $wsmanReady = $false
+                    try {
+                        $wsmanParams = @{ ComputerName = $ip; ErrorAction = 'Stop' }
+                        if ($Credential) {
+                            $wsmanParams['Credential'] = $Credential
+                            $wsmanParams['Authentication'] = 'Negotiate'
+                        }
+                        $wsmanRes = Test-WSMan @wsmanParams
+                        if ($wsmanRes) { $wsmanReady = $true }
+                    } catch {
+                        $wsmanReady = $false
+                    }
+
+                    if ($wsmanReady) {
+                        Write-Output "[+] WinRM Verified: $ip"
+                        $validTargets.Add($ip)
+                    } else {
+                        Write-Output "[-] Port $Port Open, but WinRM Auth/WSMan Failed: $ip"
+                    }
+                }
+            }
+        }
+
+        Write-Output "Scan complete. Found $($validTargets.Count) active WinRM host(s)."
+        return $validTargets.ToArray()
+    }
+}
+
+
 
 function Publish-Data {
     param (
@@ -2292,7 +2400,7 @@ function Get-RemoteArtifact {
         [string]$Path,
 
         [Parameter()]
-        [ValidateSet('Auto', 'File', 'Executable', 'Directory')]
+        [ValidateSet('Auto', 'File', 'Executable', 'Directory', 'DirectoryZip')]
         [string]$Type = 'Auto',
 
         [Parameter()]
@@ -2324,12 +2432,13 @@ function Get-RemoteArtifact {
     Process {
         $exeExtensions = @('.exe', '.dll', '.sys', '.scr', '.bat', '.vbs', '.ps1', '.cmd', '.msi', '.jar')
         $remoteTempFolder = "C:\Windows\Temp\Artifact_Export"
+        $cleanPath = $Path.Trim().TrimEnd("\", "/")
 
         foreach ($computer in $ComputerName) {
             if ([string]::IsNullOrWhiteSpace($computer)) { continue }
 
             Write-Output "=================== Remote Artifact Target: $computer ==================="
-            Write-Output "Remote Path : $Path"
+            Write-Output "Remote Path : $cleanPath"
             Write-Output "Mode / Type : $Type"
             Write-Output "Destination : $Destination"
             Write-Output "Clean Remote: $CleanRemote"
@@ -2350,10 +2459,10 @@ function Get-RemoteArtifact {
                         $ext = [System.IO.Path]::GetExtension($targetPath).ToLower()
                         if ($exts -contains $ext) { return "Executable" }
                         return "File"
-                    } -ArgumentList $Path, $exeExtensions
+                    } -ArgumentList $cleanPath, $exeExtensions
 
                     if ($remoteCheck -eq "NotFound") {
-                        throw "Target path '$Path' was not found on remote computer '$computer'."
+                        throw "Target path '$cleanPath' was not found on remote computer '$computer'."
                     }
                     $resolvedMode = $remoteCheck
                     Write-Output "-> Auto-detected artifact type: $resolvedMode"
@@ -2365,8 +2474,8 @@ function Get-RemoteArtifact {
                 # --- MODE: FILE (Raw copy) ---
                 if ($resolvedMode -eq 'File') {
                     Write-Output "-> Copying raw file from $computer..."
-                    Copy-Item -Path $Path -FromSession $session -Destination $Destination -Force -ErrorAction Stop
-                    $fileName = Split-Path $Path -Leaf
+                    Copy-Item -Path $cleanPath -FromSession $session -Destination $Destination -Force -ErrorAction Stop
+                    $fileName = Split-Path $cleanPath -Leaf
                     $downloadedFile = Join-Path $Destination $fileName
                     $acquiredSuccess = $true
                     Write-Output "-> Successfully retrieved file: $downloadedFile"
@@ -2396,7 +2505,7 @@ function Get-RemoteArtifact {
                         [System.IO.Compression.ZipFile]::CreateFromDirectory($tempDir, $zipPath)
                         Remove-Item $tempDir -Recurse -Force | Out-Null
                         return $zipName
-                    } -ArgumentList $Path, $remoteTempFolder, $ZipPassword
+                    } -ArgumentList $cleanPath, $remoteTempFolder, $ZipPassword
 
                     $remoteZipPath = "$remoteTempFolder\$zipResult"
                     Write-Output "-> Downloading encrypted artifact package ($zipResult)..."
@@ -2410,24 +2519,55 @@ function Get-RemoteArtifact {
                     Write-Output "-> Successfully acquired protected executable archive: $downloadedFile (Password: $ZipPassword)"
                 }
 
-                # --- MODE: DIRECTORY (Recursive ZIP) ---
+                # --- MODE: DIRECTORY (Recursive Folder Copy) ---
                 elseif ($resolvedMode -eq 'Directory') {
-                    Write-Output "-> Zipping directory recursively on target machine..."
+                    Write-Output "-> Copying remote directory recursively from $computer..."
+                    $folderLeaf = Split-Path $cleanPath -Leaf
+                    if ([string]::IsNullOrWhiteSpace($folderLeaf)) { $folderLeaf = "RemoteFolder" }
+                    $targetDest = Join-Path $Destination $folderLeaf
+                    if (-not (Test-Path $targetDest)) {
+                        New-Item -ItemType Directory -Path $targetDest -Force | Out-Null
+                    }
+                    Copy-Item -Path "$cleanPath\*" -FromSession $session -Destination $targetDest -Recurse -Force -ErrorAction Stop
+                    $downloadedFile = $targetDest
+                    $acquiredSuccess = $true
+                    Write-Output "-> Successfully acquired directory folder: $downloadedFile"
+                }
+
+                # --- MODE: DIRECTORYZIP (Recursive Compressed Archive) ---
+                elseif ($resolvedMode -eq 'DirectoryZip') {
+                    Write-Output "-> Zipping directory on target machine..."
                     $dirResult = Invoke-Command -Session $session -ScriptBlock {
                         param($targetPath, $tempFolder)
-                        if (-not (Test-Path $targetPath -PathType Container)) { throw "Target directory not found." }
+                        if (-not (Test-Path $targetPath -PathType Container)) { throw "Target directory not found: $targetPath" }
                         New-Item -ItemType Directory -Path $tempFolder -Force | Out-Null
                         
-                        $folderName = (Get-Item $targetPath).Name
-                        $zipName = "Artifact_${folderName}_folder.zip"
+                        $folderLeaf = Split-Path $targetPath -Leaf
+                        if ([string]::IsNullOrWhiteSpace($folderLeaf)) { $folderLeaf = "Artifact_Dir" }
+                        $zipName = "Artifact_${folderLeaf}_folder.zip"
                         $zipPath = Join-Path $tempFolder $zipName
 
                         if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 
-                        Add-Type -AssemblyName System.IO.Compression.FileSystem
-                        [System.IO.Compression.ZipFile]::CreateFromDirectory($targetPath, $zipPath)
+                        $zipped = $false
+                        try {
+                            Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+                            [System.IO.Compression.ZipFile]::CreateFromDirectory($targetPath, $zipPath)
+                            $zipped = $true
+                        } catch {
+                            try {
+                                Compress-Archive -Path "$targetPath\*" -DestinationPath $zipPath -Force -ErrorAction Stop
+                                $zipped = $true
+                            } catch {
+                                $zipped = $false
+                            }
+                        }
+
+                        if (-not $zipped -or -not (Test-Path $zipPath)) {
+                            throw "Failed to compress remote directory into ZIP."
+                        }
                         return $zipName
-                    } -ArgumentList $Path, $remoteTempFolder
+                    } -ArgumentList $cleanPath, $remoteTempFolder
 
                     $remoteZipPath = "$remoteTempFolder\$dirResult"
                     Write-Output "-> Downloading directory ZIP package ($dirResult)..."
@@ -2455,10 +2595,10 @@ function Get-RemoteArtifact {
                         } catch {
                             return "Error: $($_.Exception.Message)"
                         }
-                    } -ArgumentList $Path
+                    } -ArgumentList $cleanPath
 
                     if ($cleanResult -eq "Success") {
-                        Write-Output "-> REMEDIATION SUCCESS: Successfully deleted '$Path' from $computer."
+                        Write-Output "-> REMEDIATION SUCCESS: Successfully deleted '$cleanPath' from $computer."
                     } elseif ($cleanResult -like "Error:*") {
                         Write-Output "WARNING: Artifact acquired successfully, but remote removal failed: $cleanResult"
                     }
