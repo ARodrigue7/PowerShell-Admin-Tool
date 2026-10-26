@@ -74,4 +74,10 @@
     - **WPF Dispatcher Pumping**: `Show-SubnetScannerDialog` in `AdminTool.ps1` executes `[System.Windows.Threading.Dispatcher]::CurrentDispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)` during sweeps to ensure UI responsiveness, active status labels, and real-time progress bar tracking.
     - **Authentication Verification**: Integrates with the selected credential profile (`Get-ActiveCredentialFromUI`) to perform `Test-WSMan` validation on open ports, filtering out responsive ports that do not accept WinRM authentication.
 
+12. **Elastic Stack / Security Onion Baseline Shipping (`./Elastic-Shipper/Ship-HostBaseline.ps1`)**:
+    - Standalone parser located in `./Elastic-Shipper/` with its own `README.md` and `.env.example`.
+    - Reads `Get-HostBaseline` CSV folders (latest run by default, `-All` for all runs in `../Output/Baselines`, or any path via `-BaselinePath`).
+    - Auto-loads `.env` (`ES_URL`, `ES_USER`, `ES_PASS`, `SO_URL`) from `./Elastic-Shipper/.env` (or parent root).
+    - Maps all 12 baseline CSVs to `logs-admintool.windows.<suffix>-default` (`event.dataset: "admintool.windows.<suffix>"`, `event.module: "admintool"`), shipping via `_bulk` NDJSON (`{"create":{}}`) by default or `/_doc` with `-UseSingleDoc`, and outputs clickable Security Onion Hunt URLs.
+
 

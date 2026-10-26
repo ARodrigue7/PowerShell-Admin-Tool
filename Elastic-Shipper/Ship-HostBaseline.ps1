@@ -3,15 +3,18 @@
     Parses Get-HostBaseline CSV output folders and ships telemetry to Elastic Stack / Security Onion.
 
 .DESCRIPTION
-    Reads the 12 CSV datasets produced by Get-HostBaseline (./Output/Baselines/HostBaselines_<timestamp>/<host>/*.csv),
+    Reads the 12 CSV datasets produced by Get-HostBaseline (../Output/Baselines/HostBaselines_<timestamp>/<host>/*.csv),
     transforms each row into the Elastic Stack / Security Onion schema matching the Windows Ansible playbooks,
     and ships documents via the Elasticsearch _bulk API (default) or single-document /_doc POSTs (-UseSingleDoc).
 
 .EXAMPLE
-    .\Ship-HostBaseline.ps1 -ElasticUrl "https://10.0.0.10:9200" -User "elastic" -Password "changeme"
+    .\Ship-HostBaseline.ps1
 
 .EXAMPLE
-    .\Ship-HostBaseline.ps1 -BaselinePath ".\Output\Baselines\HostBaselines_20261026_103000" -DryRun
+    .\Ship-HostBaseline.ps1 -All
+
+.EXAMPLE
+    .\Ship-HostBaseline.ps1 -BaselinePath "..\Output\Baselines\HostBaselines_20261026_103000" -DryRun
 #>
 [CmdletBinding()]
 param(
@@ -34,6 +37,12 @@ param(
     [string]$SecurityOnionUrl = $env:SO_URL,
 
     [Parameter()]
+    [string]$EnvFile,
+
+    [Parameter()]
+    [string]$LinksFile,
+
+    [Parameter()]
     [string]$DatasetPrefix = "admintool.windows",
 
     [Parameter()]
@@ -47,6 +56,9 @@ param(
 
     [Parameter()]
     [switch]$UseIngestTimestamp,
+
+    [Parameter()]
+    [switch]$All,
 
     [Parameter()]
     [switch]$DryRun,
@@ -451,18 +463,56 @@ if ($SelfTest) {
     return
 }
 
-# 1. Resolve BaselinePath
-$toolRoot = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
-if ([string]::IsNullOrWhiteSpace($BaselinePath)) {
-    $baselinesRoot = Join-Path $toolRoot "Output/Baselines"
-    $latest = if (Test-Path $baselinesRoot) {
-        Get-ChildItem -Path $baselinesRoot -Directory -Filter "HostBaselines_*" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    } else { $null }
+# 1. Resolve Script/Tool Root & Load .env if present
+$scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+$parentDir = Split-Path $scriptDir -Parent
 
-    if (-not $latest) {
-        throw "No -BaselinePath specified and no 'HostBaselines_*' folders found under '$baselinesRoot'."
+$envCandidates = @(
+    if ($EnvFile) { $EnvFile }
+    Join-Path $scriptDir ".env"
+    if ($parentDir) { Join-Path $parentDir ".env" }
+)
+$envFilePath = $envCandidates | Where-Object { $_ -and (Test-Path $_ -PathType Leaf) } | Select-Object -First 1
+
+if ($envFilePath) {
+    $envConfig = @{}
+    foreach ($line in (Get-Content $envFilePath -Encoding UTF8)) {
+        $trimmed = $line.Trim()
+        if ($trimmed -and -not $trimmed.StartsWith('#') -and $trimmed -match '^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$') {
+            $val = $Matches[2].Trim()
+            if (($val.StartsWith('"') -and $val.EndsWith('"')) -or ($val.StartsWith("'") -and $val.EndsWith("'"))) {
+                $val = $val.Substring(1, $val.Length - 2)
+            }
+            $envConfig[$Matches[1]] = $val
+        }
     }
-    $BaselinePath = $latest.FullName
+    if ([string]::IsNullOrWhiteSpace($ElasticUrl)       -and $envConfig['ES_URL'])  { $ElasticUrl       = $envConfig['ES_URL'] }
+    if ([string]::IsNullOrWhiteSpace($User)             -and $envConfig['ES_USER']) { $User             = $envConfig['ES_USER'] }
+    if ([string]::IsNullOrWhiteSpace($Password)         -and $envConfig['ES_PASS']) { $Password         = $envConfig['ES_PASS'] }
+    if ([string]::IsNullOrWhiteSpace($SecurityOnionUrl) -and $envConfig['SO_URL'])  { $SecurityOnionUrl = $envConfig['SO_URL'] }
+}
+
+# 2. Resolve BaselinePath (checks ./Output/Baselines and ../Output/Baselines)
+if ([string]::IsNullOrWhiteSpace($BaselinePath)) {
+    $baselineRoots = @(
+        Join-Path $scriptDir "Output/Baselines"
+        if ($parentDir) { Join-Path $parentDir "Output/Baselines" }
+    )
+    $baselinesRoot = $baselineRoots | Where-Object { $_ -and (Test-Path $_ -PathType Container) } | Select-Object -First 1
+
+    if (-not $baselinesRoot) {
+        throw "No -BaselinePath specified and no 'Output/Baselines' folder found relative to '$scriptDir'."
+    }
+
+    if ($All) {
+        $BaselinePath = $baselinesRoot
+    } else {
+        $latest = Get-ChildItem -Path $baselinesRoot -Directory -Filter "*Baselines_*" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if (-not $latest) {
+            throw "No '*Baselines_*' folders found under '$baselinesRoot'."
+        }
+        $BaselinePath = $latest.FullName
+    }
 }
 
 if (-not (Test-Path $BaselinePath -PathType Container)) {
@@ -470,21 +520,15 @@ if (-not (Test-Path $BaselinePath -PathType Container)) {
 }
 $BaselinePath = (Resolve-Path $BaselinePath).Path
 
-# Support passing either HostBaselines_<timestamp> root OR a single <computer> subfolder
-$directCsvs = @(Get-ChildItem -Path $BaselinePath -Filter "*.csv" -File -ErrorAction SilentlyContinue)
-$hostFolders = @(
-    if ($directCsvs.Count -gt 0) {
-        Get-Item -Path $BaselinePath
-    } else {
-        Get-ChildItem -Path $BaselinePath -Directory -ErrorAction SilentlyContinue
-    }
-)
+# Discover all host folders containing CSVs (supports Output/Baselines, a single run folder, or a single host folder)
+$allCsvs = @(Get-ChildItem -Path $BaselinePath -Filter "*.csv" -File -Recurse -ErrorAction SilentlyContinue)
+$hostFolders = @($allCsvs | ForEach-Object { $_.Directory } | Sort-Object FullName -Unique)
 
 if ($hostFolders.Count -eq 0) {
-    throw "No host baseline folders or CSV files found in '$BaselinePath'."
+    throw "No baseline CSV files found under '$BaselinePath'."
 }
 
-# 2. Validate & prepare Elasticsearch connection
+# 3. Validate & prepare Elasticsearch connection
 $headers = @{ Accept = 'application/json' }
 $skipCertParam = @{}
 
@@ -530,7 +574,8 @@ foreach ($hostDir in $hostFolders) {
     $csvFiles = @(Get-ChildItem -Path $hostDir.FullName -Filter "*.csv" -File | Sort-Object Name)
     if ($csvFiles.Count -eq 0) { continue }
 
-    Write-Output "`n--- Host: $hostName ($($csvFiles.Count) CSV file(s)) ---"
+    $hostLabel = if ($hostDir.Parent -and $hostDir.Parent.Name -like "*Baselines_*") { "$($hostDir.Parent.Name)/$hostName" } else { $hostName }
+    Write-Output "`n--- Host: $hostLabel ($($csvFiles.Count) CSV file(s)) ---"
 
     foreach ($csvFile in $csvFiles) {
         $csvBaseName = $csvFile.BaseName
@@ -628,6 +673,11 @@ if ($shippedSuffixes.Count -gt 0) {
         "https://securityonion"
     }
 
+    $linkLines = [System.Collections.Generic.List[string]]::new()
+    $linkLines.Add("# Security Onion Hunt Links ($((Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ssZ')))")
+    $linkLines.Add("# Source: $BaselinePath")
+    $linkLines.Add("")
+
     Write-Output "`n--- Security Onion Hunt Links ---"
     foreach ($suf in $HuntMetadata.Keys) {
         if (-not $shippedSuffixes.Contains($suf)) { continue }
@@ -635,6 +685,20 @@ if ($shippedSuffixes.Count -gt 0) {
         $dataset = "$DatasetPrefix.$suf"
         $groupPart = ($meta.GroupBy | ForEach-Object { "+|+groupby+%22$_%22" }) -join ""
         $huntUrl = "$soBase/#/hunt?q=event.dataset:+%22$dataset%22+|+table+soc_timestamp+$($meta.Fields)$groupPart&z=America/New_York&el=100&gl=10&rt=24&rtu=hours"
-        Write-Output "[$dataset] $huntUrl"
+        $line = "[$dataset] $huntUrl"
+        Write-Output $line
+        $linkLines.Add($line)
+    }
+
+    $linksOutPath = if (-not [string]::IsNullOrWhiteSpace($LinksFile)) {
+        [System.IO.Path]::GetFullPath($LinksFile)
+    } else {
+        Join-Path $BaselinePath "hunt_links.txt"
+    }
+    try {
+        [System.IO.File]::WriteAllLines($linksOutPath, $linkLines.ToArray(), [System.Text.Encoding]::UTF8)
+        Write-Output "`n-> Saved Security Onion Hunt links to: $linksOutPath"
+    } catch {
+        Write-Warning "Could not write Hunt links file '$linksOutPath': $($_.Exception.Message)"
     }
 }
